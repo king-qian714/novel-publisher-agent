@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>番茄小说草稿上传助手</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <div class="window-titlebar">
+        <div class="window-drag-zone">
+          <span class="app-mark">番</span>
+          <span class="window-title">番茄小说草稿上传助手</span>
+          <span class="window-caption">自动草稿 / 直接发布工作台</span>
+        </div>
+        <div class="window-controls">
+          <button id="minimizeMainWindowBtn" class="window-control" title="最小化">—</button>
+          <button id="toggleMainWindowBtn" class="window-control" title="最大化/还原">□</button>
+          <button id="closeMainWindowBtn" class="window-control close" title="关闭">×</button>
+        </div>
+      </div>
+
+      <header class="topbar">
+        <div>
+          <div class="app-title">番茄小说草稿上传助手</div>
+          <div class="app-subtitle">先打开番茄作家助手工作台 → 进入作品章节管理 → 扫描本地章节 → 勾选上传草稿或完整发布</div>
+        </div>
+        <div class="top-actions">
+          <button id="openFanqieBtn" class="primary">打开作家助手工作台</button>
+          <button id="saveReportBtn" class="secondary">导出报告</button>
+        </div>
+      </header>
+
+      <main class="main-layout">
+        <section class="workflow-grid">
+          <div class="card controls-card step-card primary-step">
+            <div class="section-title">1. 登录并进入章节管理</div>
+            <p class="hint">
+              只打开番茄作家助手 PC 工作台窗口。登录 Cookie 会保存在本机有效期内，未过期时无需重复扫码。请在弹窗中登录后手动进入目标作品的章节管理/目录页，上传时不要关闭该窗口。
+            </p>
+            <div class="row gap wrap">
+              <button id="loginPopupBtn" class="primary">打开作家助手窗口</button>
+              <button id="minimizeWriterWindowBtn" class="secondary">最小化作家窗口</button>
+              <button id="toggleMaxWriterWindowBtn" class="secondary">最大化/还原</button>
+              <button id="reloadWriterWindowBtn" class="secondary">刷新作家窗口</button>
+              <button id="loginReadyBtn" class="secondary">我已登录</button>
+              <button id="chapterPageReadyBtn" class="secondary">我已进入章节页</button>
+              <button id="testPageBtn" class="secondary">检测当前页面</button>
+            </div>
+            <div class="status-strip">
+              <span id="writerWindowState">作家窗口：未打开</span>
+              <span id="loginState">登录：未确认</span>
+              <span id="pageState">章节页：未确认</span>
+            </div>
+            <div id="writerWindowUrl" class="folder-path">当前作家窗口地址：尚未打开</div>
+          </div>
+
+          <div class="card controls-card step-card">
+            <div class="section-title">2. 选择本地章节文件夹</div>
+            <div class="row gap wrap">
+              <button id="selectFolderBtn">选择文件夹</button>
+              <button id="rescanBtn" class="secondary">重新扫描</button>
+            </div>
+            <div id="folderPath" class="folder-path">尚未选择文件夹</div>
+
+            <div class="settings-grid compact-settings">
+              <label class="checkbox-line">
+                <input id="removeTitleLine" type="checkbox" checked />
+                上传正文时移除标题行（只影响上传内容，不修改原文件）
+              </label>
+              <label class="checkbox-line">
+                <input id="recursiveScan" type="checkbox" />
+                扫描子文件夹
+              </label>
+              <label class="field-line">
+                <span>章节间隔</span>
+                <input id="uploadDelay" type="number" min="500" step="500" value="2500" />
+                <span>毫秒</span>
+              </label>
+              <label class="field-line wide-field">
+                <span>作品名</span>
+                <input id="bookName" type="text" placeholder="用于防重复记录，可选" />
+              </label>
+            </div>
+          </div>
+
+          <div class="card controls-card step-card">
+            <div class="section-title">3. 上传草稿</div>
+            <p class="hint">确认作家窗口停留在目标作品章节管理页后，再开始上传。异常时会暂停，等待你在作家窗口中人工处理。</p>
+            <label class="field-line upload-action-line">
+              <span>完成后动作</span>
+              <select id="publishAction">
+                <option value="draft">存草稿</option>
+                <option value="next">完整发布流程（下一步→检测→确认发布）</option>
+                <option value="none">只填写不点击</option>
+              </select>
+            </label>
+            <div class="row gap wrap">
+              <button id="startBtn" class="primary">开始上传草稿</button>
+              <button id="uploadSelectedBtn" class="secondary">上传勾选/选中章</button>
+              <button id="pauseBtn" class="secondary">暂停</button>
+              <button id="resumeBtn" class="secondary">继续</button>
+              <button id="skipCurrentBtn" class="secondary">跳过当前章</button>
+              <button id="stopBtn" class="danger">停止</button>
+            </div>
+            <div class="status-strip">
+              <span id="taskState">任务：空闲</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="card chapter-card">
+          <div class="section-title with-count">
+            <span>章节列表</span>
+            <span id="chapterCount">0 章</span>
+          </div>
+          <div class="chapter-toolbar">
+            <span>默认不勾选章节，避免误传。可勾选要上传的章节，或点击“查看”预览正文。</span>
+            <div class="row gap wrap">
+              <button id="selectAllVisibleBtn" class="tiny">全选</button>
+              <button id="clearSelectedBtn" class="tiny">清空选择</button>
+              <button id="invertSelectedBtn" class="tiny">反选</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th class="check-col"><input id="selectAllChapters" type="checkbox" title="全选/全不选" /></th>
+                  <th class="narrow">序号</th>
+                  <th class="file-col">文件名</th>
+                  <th class="title-col">标题</th>
+                  <th class="narrow">字数</th>
+                  <th class="status-col">状态</th>
+                  <th class="action-col">查看</th>
+                </tr>
+              </thead>
+              <tbody id="chapterTableBody"></tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+
+      <footer class="log-panel">
+        <div class="log-header">
+          <span>运行日志</span>
+          <button id="clearLogBtn" class="tiny">清空</button>
+        </div>
+        <pre id="logBox"></pre>
+      </footer>
+    </div>
+
+    <div id="previewModal" class="modal-mask hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div>
+            <div id="previewTitle" class="modal-title">章节预览</div>
+            <div id="previewMeta" class="modal-meta"></div>
+          </div>
+          <button id="closePreviewBtn" class="secondary">关闭</button>
+        </div>
+        <div class="modal-note">以下为将上传的正文预览；本工具只读扫描本地文件，不会修改原文件内容。</div>
+        <pre id="previewBody" class="preview-body"></pre>
+      </div>
+    </div>
+
+    <script src="./renderer.js"></script>
+  </body>
+</html>

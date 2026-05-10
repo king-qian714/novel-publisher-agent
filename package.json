@@ -1,0 +1,14 @@
+{
+  "name": "novel-publisher-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "番茄小说草稿上传助手 MVP",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "check": "node --check src/main/main.js && node --check src/main/preload.js && node --check src/renderer/renderer.js"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7"
+  }
+}
