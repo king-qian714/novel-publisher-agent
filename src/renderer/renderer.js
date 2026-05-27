@@ -1413,16 +1413,31 @@ function buildUploadScript(title, content, options = {}) {
         try { el.focus(); } catch (_) {}
         try { el.select(); } catch (_) {}
 
-        const fiberKey = Object.keys(el).find((k) => k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$'));
+        const allKeys = Object.getOwnPropertyNames(el);
+        const fiberKey = allKeys.find((k) => k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$'));
+        const propsKey = allKeys.find((k) => k.startsWith('__reactProps$'));
+
+        function callOnChange(handler) {
+          if (nativeSetter) nativeSetter.call(el, value);
+          else el.value = value;
+          try { handler({ target: el, currentTarget: el }); } catch (_) {}
+          if (el.value === value) return true;
+          return false;
+        }
+
+        if (propsKey) {
+          const reactProps = el[propsKey];
+          if (reactProps && typeof reactProps.onChange === 'function') {
+            if (callOnChange(reactProps.onChange)) return;
+          }
+        }
+
         if (fiberKey) {
           let fiber = el[fiberKey];
           while (fiber) {
             const props = fiber.memoizedProps || fiber.pendingProps;
             if (props && typeof props.onChange === 'function') {
-              if (nativeSetter) nativeSetter.call(el, value);
-              else el.value = value;
-              try { props.onChange({ target: el, currentTarget: el }); } catch (_) {}
-              if (el.value === value) return;
+              if (callOnChange(props.onChange)) return;
             }
             fiber = fiber.return;
           }
