@@ -233,6 +233,28 @@ table,
   font-weight: 800;
 }
 
+.app-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.platform-switch {
+  font-size: 13px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  outline: none;
+  font-weight: 600;
+}
+
+.platform-switch:hover {
+  border-color: var(--primary);
+}
+
 .app-subtitle {
   margin-top: 4px;
   color: var(--muted);

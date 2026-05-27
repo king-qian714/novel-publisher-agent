@@ -1,5 +1,8 @@
 const api = window.novelPublisher;
 const DEFAULT_FANQIE_URL = 'https://fanqienovel.com/main/writer/book-manage';
+const DEFAULT_QIMAO_URL = 'https://zuozhe.qimao.com/front/index';
+
+let currentPlatform = 'fanqie';
 
 const els = {
   selectFolderBtn: document.getElementById('selectFolderBtn'),
@@ -23,7 +26,7 @@ const els = {
   resumeBtn: document.getElementById('resumeBtn'),
   skipCurrentBtn: document.getElementById('skipCurrentBtn'),
   stopBtn: document.getElementById('stopBtn'),
-  openFanqieBtn: document.getElementById('openFanqieBtn'),
+  openWriterBtn: document.getElementById('openWriterBtn'),
   saveReportBtn: document.getElementById('saveReportBtn'),
   minimizeMainWindowBtn: document.getElementById('minimizeMainWindowBtn'),
   toggleMainWindowBtn: document.getElementById('toggleMainWindowBtn'),
@@ -45,7 +48,33 @@ const els = {
   previewBody: document.getElementById('previewBody'),
   closePreviewBtn: document.getElementById('closePreviewBtn'),
   logBox: document.getElementById('logBox'),
-  clearLogBtn: document.getElementById('clearLogBtn')
+  clearLogBtn: document.getElementById('clearLogBtn'),
+  platformSelector: document.getElementById('platformSelector'),
+  appTitle: document.getElementById('appTitle'),
+  appSubtitle: document.getElementById('appSubtitle'),
+  pageTitle: document.getElementById('pageTitle'),
+  windowTitle: document.getElementById('windowTitle'),
+  windowCaption: document.getElementById('windowCaption'),
+  appMark: document.getElementById('appMark')
+};
+
+const PLATFORM_INFO = {
+  fanqie: {
+    name: 'fanqie',
+    displayName: '番茄小说',
+    defaultUrl: DEFAULT_FANQIE_URL,
+    mark: '番',
+    appName: '番茄小说草稿上传助手',
+    windowCaption: '自动草稿 / 直接发布工作台'
+  },
+  qimao: {
+    name: 'qimao',
+    displayName: '七猫小说',
+    defaultUrl: DEFAULT_QIMAO_URL,
+    mark: '七',
+    appName: '七猫小说草稿上传助手',
+    windowCaption: '自动草稿 / 完整发布工作台'
+  }
 };
 
 let settings = {
@@ -53,7 +82,9 @@ let settings = {
   recursive: false,
   uploadDelayMs: 2500,
   publishAction: 'draft',
-  fanqieUrl: DEFAULT_FANQIE_URL
+  fanqieUrl: DEFAULT_FANQIE_URL,
+  qimaoUrl: DEFAULT_QIMAO_URL,
+  platform: 'fanqie'
 };
 
 let folderPath = '';
@@ -67,6 +98,28 @@ let pauseRequested = false;
 let stopRequested = false;
 let waitResumeResolve = null;
 let skipCurrentRequested = false;
+
+function platformInfo() {
+  return PLATFORM_INFO[currentPlatform] || PLATFORM_INFO.fanqie;
+}
+
+function platformUrl() {
+  return currentPlatform === 'qimao' ? (settings.qimaoUrl || DEFAULT_QIMAO_URL) : (settings.fanqieUrl || DEFAULT_FANQIE_URL);
+}
+
+function updatePlatformUI() {
+  const info = platformInfo();
+  document.title = info.appName;
+  if (els.appTitle) els.appTitle.textContent = `${info.displayName}草稿上传助手`;
+  if (els.appMark) els.appMark.textContent = info.mark;
+  if (els.windowTitle) els.windowTitle.textContent = info.appName;
+  if (els.windowCaption) els.windowCaption.textContent = info.windowCaption;
+  if (els.appSubtitle) {
+    els.appSubtitle.textContent = `先打开${info.displayName}作家助手工作台 → 进入作品章节管理 → 扫描本地章节 → 勾选上传草稿或完整发布`;
+  }
+  if (els.platformSelector) els.platformSelector.value = currentPlatform;
+  log(`切换到${info.displayName}平台`);
+}
 
 function nowTime() {
   return new Date().toLocaleTimeString('zh-CN', { hour12: false });
@@ -115,7 +168,9 @@ function currentSettingsFromUi() {
     recursive: els.recursiveScan.checked,
     uploadDelayMs: Math.max(500, Number(els.uploadDelay.value || 2500)),
     publishAction: els.publishAction.value || 'draft',
-    fanqieUrl: settings.fanqieUrl || DEFAULT_FANQIE_URL
+    fanqieUrl: settings.fanqieUrl || DEFAULT_FANQIE_URL,
+    qimaoUrl: settings.qimaoUrl || DEFAULT_QIMAO_URL,
+    platform: currentPlatform
   };
 }
 
@@ -209,7 +264,7 @@ function applyHistoricalRecords() {
   const bookName = els.bookName.value.trim();
   const recordMap = new Map();
   for (const record of records) {
-    if (record.platform !== 'fanqie') continue;
+    if (record.platform && record.platform !== currentPlatform) continue;
     if (bookName && record.bookName && record.bookName !== bookName) continue;
     recordMap.set(record.contentHash, record);
   }
@@ -271,10 +326,15 @@ function updateWriterWindowState(state) {
 }
 
 async function openWriterWindow(url) {
-  const target = url || settings.fanqieUrl || DEFAULT_FANQIE_URL;
-  await api.openFanqieWriterWindow({ url: target });
-  updateWriterWindowState({ open: true, url: target, title: '番茄作家助手工作台' });
-  log(`已打开番茄作家助手工作台：${target}`);
+  const info = platformInfo();
+  const target = url || platformUrl();
+  if (currentPlatform === 'qimao') {
+    await api.openQimaoWriterWindow({ url: target });
+  } else {
+    await api.openFanqieWriterWindow({ url: target });
+  }
+  updateWriterWindowState({ open: true, url: target, title: `${info.displayName}作家助手工作台` });
+  log(`已打开${info.displayName}作家助手工作台：${target}`);
 }
 
 function sleep(ms) {
@@ -293,13 +353,34 @@ async function sleepWithStop(ms, step = 250) {
   }
 }
 
+function writerApi() {
+  return currentPlatform === 'qimao' ? {
+    executeJs: api.executeInQimaoWindow,
+    executeJsSafe: api.executeInQimaoWindowSafe,
+    clickSaveDraft: null,
+    clickWorkflowAction: null,
+    getWindowState: api.getQimaoWindowState,
+    controlWindow: api.controlQimaoWriterWindow,
+    reloadWindow: api.reloadQimaoWriterWindow
+  } : {
+    executeJs: api.executeInFanqieWindow,
+    executeJsSafe: api.executeInFanqieWindowSafe,
+    clickSaveDraft: api.clickFanqieSaveDraft,
+    clickWorkflowAction: api.clickFanqieWorkflowAction,
+    getWindowState: api.getFanqieWindowState,
+    controlWindow: api.controlFanqieWriterWindow,
+    reloadWindow: api.reloadFanqieWriterWindow
+  };
+}
+
 async function executeInWriterWindow(script) {
-  return api.executeInFanqieWindow(script);
+  return writerApi().executeJs(script);
 }
 
 async function executeInWriterWindowSafe(script) {
-  if (!api.executeInFanqieWindowSafe) return executeInWriterWindow(script);
-  const result = await api.executeInFanqieWindowSafe(script);
+  const safe = writerApi().executeJsSafe;
+  if (!safe) return executeInWriterWindow(script);
+  const result = await safe(script);
   if (result?.ok) return result.value;
   const message = result?.message || '脚本暂时无法执行';
   throw new Error(`${message}；当前地址：${result?.url || '未知'}`);
@@ -358,7 +439,7 @@ async function waitForWriterDomStable(stableMs = 1000, timeout = 12000) {
 
 async function getWriterStateSafe() {
   try {
-    const state = await api.getFanqieWindowState();
+    const state = await writerApi().getWindowState();
     updateWriterWindowState(state);
     return state;
   } catch (_) {
@@ -449,7 +530,7 @@ function buildWorkflowSnapshotScript() {
         .filter((item) => /button|a|label/.test(item.tag) || item.role === 'button' || item.role === 'radio' || /btn|button|radio/.test(item.className))
         .map((item) => item.text);
       const allText = normalize(visibleElements.map((el) => human(el)).filter(Boolean).join(' '));
-      const riskVisible = /是否进行内容风险检测|内容风险检测|风险检测|风险提示/.test(allText) && /取消|确定/.test(allText);
+      const riskVisible = /内容风险|风险检测|风险提示|安全检测|AI生成/.test(allText) && /取消|确定|仅基础检测/.test(allText);
       const publishSettingVisible = /发布设置/.test(allText) && /是否使用\\s*AI/.test(allText);
       const typoContextVisible = /错别字|错字|病句|语病|校对|纠错|错词|别字/.test(allText) && !riskVisible;
       const typoSubmitVisible = typoContextVisible && buttonTexts.some((text) => /^(提交|确认提交|确定提交)$/.test(text));
@@ -628,7 +709,7 @@ function buildPublishCompletionDetectionScript() {
       const hardChapterManageUrl = /\/chapter-manage\//.test(url);
       const hasNewChapter = buttons.some((value) => /新建章节|新增章节|创建章节|写新章节|添加章节|发布章节|新建章/.test(value));
       const hasSuccess = /发布成功|提交成功|发布完成|章节发布成功|已成功发布|操作成功|已发布/.test(text);
-      const hasRisk = modalTexts.some((value) => /是否进行内容风险检测|内容风险检测|风险检测|风险提示|安全检测|违规|敏感|存在风险/.test(value));
+      const hasRisk = modalTexts.some((value) => /内容风险|风险检测|风险提示|安全检测|AI生成|违规|敏感|存在风险/.test(value));
       const hasTypoConfirm = modalTexts.some((value) => /检测到你还有错别字未修改|错别字未修改|是否确定提交/.test(value) && /取消/.test(value) && /提交/.test(value));
       const publishSettingVisible = modalTexts.some((value) => /发布设置/.test(value) && /是否使用\\s*AI/.test(value));
       const hasConfirmPublish = publishSettingVisible && buttons.some((value) => /^确认发布$|^确定发布$/.test(value));
@@ -1334,6 +1415,15 @@ function buildUploadScript(title, content, options = {}) {
         el.dispatchEvent(new win.Event('input', { bubbles: true }));
         try { el.dispatchEvent(new win.InputEvent('input', { bubbles: true, inputType: 'insertText', data: value })); } catch (_) {}
         el.dispatchEvent(new win.Event('change', { bubbles: true }));
+        // React 受控组件回退：如果值未被框架接受，用 execCommand 模拟用户输入
+        if (el.value !== value || !el.value) {
+          try { el.focus(); } catch (_) {}
+          try { el.setSelectionRange(0, el.value ? el.value.length : 0); } catch (_) {}
+          try { el.dispatchEvent(new win.Event('beforeinput', { bubbles: true, cancelable: true })); } catch (_) {}
+          try { win.document.execCommand('insertText', false, value); } catch (_) {}
+          el.dispatchEvent(new win.Event('input', { bubbles: true }));
+          el.dispatchEvent(new win.Event('change', { bubbles: true }));
+        }
       }
 
       async function insertTextIntoEditable(el, value, replaceAll) {
@@ -1613,7 +1703,8 @@ function buildUploadScript(title, content, options = {}) {
 
 async function detectCurrentPage() {
   try {
-    const info = await executeInWriterWindowSafe(buildPageDetectionScript());
+    const pageScript = currentPlatform === 'qimao' ? api.qimaoBuildPageDetectionScript() : buildPageDetectionScript();
+    const info = await executeInWriterWindowSafe(pageScript);
     log(`当前页面：${info.title || '无标题'}，地址：${info.url}`);
     log(`页面检测：新建章节按钮=${info.hasNewChapter ? '可能存在' : '未发现'}，编辑器=${info.editableCount}，文本框=${info.textareaCount}，输入框=${info.inputCount}`);
     if (info.mayNeedLogin) {
@@ -1629,6 +1720,21 @@ async function detectCurrentPage() {
   }
 }
 
+function buildPlatformClickNewChapterScript() {
+  if (currentPlatform === 'qimao') return api.qimaoBuildClickNewChapterScript();
+  return buildClickNewChapterScript();
+}
+
+function buildPlatformUploadScript(title, body, options) {
+  if (currentPlatform === 'qimao') return api.qimaoBuildUploadScript(title, body, options);
+  return buildUploadScript(title, body, options);
+}
+
+function platformEditorUrlPattern() {
+  if (currentPlatform === 'qimao') return /\/chapter-editor|\/edit|\/chapter\//;
+  return /\/publish\//;
+}
+
 async function uploadOneChapter(chapter) {
   if (!chapter) throw new Error('没有选择章节。');
   if (!chapter.title || !chapter.body) {
@@ -1641,9 +1747,12 @@ async function uploadOneChapter(chapter) {
   log(`开始上传：${chapter.index}. ${chapter.title}（${chapter.wordCount} 字）`);
 
   const stateBeforeUpload = await getWriterStateSafe();
-  await dismissLingeringTypoDialog('开始下一章前检测到残留错别字提示');
+  if (currentPlatform === 'fanqie') {
+    await dismissLingeringTypoDialog('开始下一章前检测到残留错别字提示');
+  }
   const stateAfterCleanup = await getWriterStateSafe();
-  const alreadyInEditor = /\/publish\//.test(stateAfterCleanup?.url || stateBeforeUpload?.url || '');
+  const editorPattern = platformEditorUrlPattern();
+  const alreadyInEditor = editorPattern.test(stateAfterCleanup?.url || stateBeforeUpload?.url || '');
 
   let result;
   try {
@@ -1651,7 +1760,7 @@ async function uploadOneChapter(chapter) {
       log('当前在章节管理页，先点击“新建章节”，等待编辑页加载完成后再填写。');
       try {
         const clickResult = await withTimeout(
-          executeInWriterWindow(buildClickNewChapterScript()),
+          executeInWriterWindow(buildPlatformClickNewChapterScript()),
           8000,
           '点击新建章节脚本超时'
         );
@@ -1670,7 +1779,7 @@ async function uploadOneChapter(chapter) {
       }
 
       if (!result) {
-        const readyState = await waitForWriterPageReady(/\/publish\//, 45000);
+        const readyState = await waitForWriterPageReady(editorPattern, 45000);
         log(`新建章节编辑页已就绪：${readyState.url || '未知地址'}`);
       }
     } else {
@@ -1678,11 +1787,19 @@ async function uploadOneChapter(chapter) {
     }
 
     if (!result) {
-      result = await withTimeout(
-        executeInWriterWindow(buildUploadScript(chapter.title, chapter.body, { clickNew: false, saveDraft: false })),
-        45000,
-        '当前编辑页填写脚本执行超时'
-      );
+      const finalAction = els.publishAction.value || settings.publishAction || 'draft';
+      if (currentPlatform === 'qimao' && finalAction === 'none') {
+        log('完成后动作设置为“只填写不点击”，跳过七猫编辑页填写。');
+        result = { ok: true, skipped: true };
+      } else {
+        const qimaoSaveDraft = currentPlatform === 'qimao' ? (finalAction !== 'next') : false;
+        const platformOptions = { clickNew: false, saveDraft: qimaoSaveDraft };
+        result = await withTimeout(
+          executeInWriterWindow(buildPlatformUploadScript(chapter.title, chapter.body, platformOptions)),
+          finalAction === 'next' ? 90000 : 45000,
+          '当前编辑页填写脚本执行超时'
+        );
+      }
     }
 
     if (result?.ok) {
@@ -1690,16 +1807,24 @@ async function uploadOneChapter(chapter) {
       const label = finalAction === 'next' ? '完整发布流程' : (finalAction === 'none' ? '只填写不点击' : '存草稿');
       log(`标题和正文已写入，完成后动作：${label}。`);
       if (finalAction === 'next') {
-        const publishResult = await runDirectPublishFlow();
-        result.publishInfo = publishResult.info || publishResult;
-      } else {
+        if (currentPlatform === 'qimao') {
+          log('七猫发布流程由脚本内部完成，等待发布完成...');
+          await sleepWithStop(3000);
+        } else {
+          const publishResult = await runDirectPublishFlow();
+          result.publishInfo = publishResult.info || publishResult;
+        }
+      } else if (currentPlatform === 'fanqie' && finalAction !== 'none') {
         await clickFinalActionWithRetry(finalAction);
+      } else if (currentPlatform === 'qimao') {
+        log('七猫存草稿流程由脚本内部完成。');
       }
       result.finalAction = finalAction;
       result.step = '完成';
+      const platformName = PLATFORM_INFO[currentPlatform]?.displayName || '平台';
       result.message = finalAction === 'none'
         ? '已填写标题和正文，未点击存草稿/发布。'
-        : (finalAction === 'next' ? '已完成直接发布流程，并返回章节管理页。' : `已通过主程序点击${label}。请以番茄后台实际状态为准。`);
+        : (finalAction === 'next' ? '已完成直接发布流程，并返回章节管理页。' : `已通过主程序点击${label}。请以${platformName}后台实际状态为准。`);
     }
   } catch (error) {
     const message = error.message || String(error);
@@ -1717,7 +1842,7 @@ async function uploadOneChapter(chapter) {
     chapter.status = finalAction === 'next' ? '已发布' : '已保存草稿';
     chapter.errorMessage = '';
     await api.markSuccess({
-      platform: 'fanqie',
+      platform: currentPlatform,
       bookName: els.bookName.value.trim(),
       title: chapter.title,
       filePath: chapter.filePath,
@@ -1777,7 +1902,8 @@ async function runBatchUpload() {
     return;
   }
   if (!pageConfirmed) {
-    const ok = window.confirm('还没有确认已进入番茄作品章节管理页。是否仍然开始？');
+    const name = platformInfo().displayName;
+    const ok = window.confirm(`还没有确认已进入${name}作品章节管理页。是否仍然开始？`);
     if (!ok) return;
   }
 
@@ -1899,11 +2025,45 @@ async function saveReport() {
   else if (!result.canceled) log('报告保存失败。');
 }
 
+function setupPlatformEventListeners(platform) {
+  const isQimao = platform === 'qimao';
+  api[isQimao ? 'onQimaoWriterWindowNavigated' : 'onFanqieWriterWindowNavigated']((state) => {
+    updateWriterWindowState(state);
+  });
+  api[isQimao ? 'onQimaoWriterWindowLoaded' : 'onFanqieWriterWindowLoaded']((state) => {
+    updateWriterWindowState(state);
+    log(`作家窗口页面加载完成：${state.url || '未知地址'}`);
+  });
+  api[isQimao ? 'onQimaoWriterWindowResized' : 'onFanqieWriterWindowResized']((state) => {
+    updateWriterWindowState(state);
+  });
+  api[isQimao ? 'onQimaoWriterWindowReady' : 'onFanqieWriterWindowReady']((state) => {
+    updateWriterWindowState(state);
+  });
+  const consoleApi = isQimao ? api.onQimaoWriterConsole : api.onFanqieWriterConsole;
+  if (typeof consoleApi === 'function') {
+    consoleApi((payload) => {
+      if (payload?.message) log(payload.message);
+    });
+  }
+  api[isQimao ? 'onQimaoWriterWindowClosed' : 'onFanqieWriterWindowClosed'](() => {
+    updateWriterWindowState({ open: false });
+    const name = PLATFORM_INFO[platform]?.displayName || '作家助手';
+    log(`${name}作家助手窗口已关闭。Cookie 会继续保存在本机，有效期内重新打开通常无需重复扫码。`);
+  });
+}
+
 async function init() {
   try {
     settings = { ...settings, ...(await api.loadSettings()) };
+    if (settings.platform && ['fanqie', 'qimao'].includes(settings.platform)) {
+      currentPlatform = settings.platform;
+    }
     if (!settings.fanqieUrl || settings.fanqieUrl === 'https://fanqienovel.com/main/writer/') {
       settings.fanqieUrl = DEFAULT_FANQIE_URL;
+    }
+    if (!settings.qimaoUrl) {
+      settings.qimaoUrl = DEFAULT_QIMAO_URL;
     }
     records = await api.loadRecords();
     if (!['draft', 'next', 'none'].includes(settings.publishAction)) settings.publishAction = 'draft';
@@ -1920,38 +2080,19 @@ async function init() {
   setTaskState('空闲');
   updateWriterWindowState({ open: false });
   renderChapters();
+  updatePlatformUI();
 
-  api.onFanqieWriterWindowNavigated((state) => {
-    updateWriterWindowState(state);
-  });
-  api.onFanqieWriterWindowLoaded((state) => {
-    updateWriterWindowState(state);
-    log(`作家窗口页面加载完成：${state.url || '未知地址'}`);
-  });
-  api.onFanqieWriterWindowResized((state) => {
-    updateWriterWindowState(state);
-  });
-  api.onFanqieWriterWindowReady((state) => {
-    updateWriterWindowState(state);
-  });
-  if (typeof api.onFanqieWriterConsole === 'function') {
-    api.onFanqieWriterConsole((payload) => {
-      if (payload?.message) log(payload.message);
-    });
-  }
-  api.onFanqieWriterWindowClosed(() => {
-    updateWriterWindowState({ open: false });
-    log('番茄作家助手窗口已关闭。Cookie 会继续保存在本机，有效期内重新打开通常无需重复扫码。');
-  });
+  setupPlatformEventListeners(currentPlatform);
 
   try {
-    const state = await api.getFanqieWindowState();
+    const state = await writerApi().getWindowState();
     updateWriterWindowState(state);
   } catch (_) {
     updateWriterWindowState({ open: false });
   }
 
-  log('工具已启动。当前流程：先打开番茄作家助手工作台并进入目标作品章节管理页，再选择本地章节文件夹并上传草稿。');
+  const info = platformInfo();
+  log(`工具已启动。当前平台：${info.displayName}。先打开${info.displayName}作家助手工作台并进入目标作品章节管理页，再选择本地章节文件夹并上传草稿。`);
 }
 
 els.selectFolderBtn.addEventListener('click', async () => {
@@ -2032,7 +2173,12 @@ els.chapterTableBody.addEventListener('input', (event) => {
 async function handleOpenWriterWindow() {
   await persistSettings();
   try {
-    await openWriterWindow(settings.fanqieUrl || DEFAULT_FANQIE_URL);
+    const targetUrl = platformUrl();
+    if (currentPlatform === 'qimao') {
+      await api.openQimaoWriterWindow({ url: targetUrl });
+    } else {
+      await api.openFanqieWriterWindow({ url: targetUrl });
+    }
   } catch (error) {
     log(`打开作家助手窗口失败：${error.message}`);
   }
@@ -2040,7 +2186,7 @@ async function handleOpenWriterWindow() {
 
 async function controlWriterWindow(action, successText) {
   try {
-    const state = await api.controlFanqieWriterWindow(action);
+    const state = await writerApi().controlWindow(action);
     updateWriterWindowState(state);
     log(successText);
   } catch (error) {
@@ -2060,14 +2206,15 @@ els.minimizeMainWindowBtn?.addEventListener('click', () => controlMainWindow('mi
 els.toggleMainWindowBtn?.addEventListener('click', () => controlMainWindow('toggle-maximize'));
 els.closeMainWindowBtn?.addEventListener('click', () => controlMainWindow('close'));
 
-els.openFanqieBtn.addEventListener('click', handleOpenWriterWindow);
+els.openWriterBtn.addEventListener('click', handleOpenWriterWindow);
 els.loginPopupBtn.addEventListener('click', handleOpenWriterWindow);
 els.minimizeWriterWindowBtn.addEventListener('click', () => controlWriterWindow('minimize', '已最小化作家窗口。'));
 els.toggleMaxWriterWindowBtn.addEventListener('click', () => controlWriterWindow('toggle-maximize', '已切换作家窗口最大化/还原状态。'));
 els.reloadWriterWindowBtn.addEventListener('click', async () => {
   try {
-    await api.reloadFanqieWriterWindow();
-    log('已刷新番茄作家助手窗口。');
+    await writerApi().reloadWindow();
+    const name = platformInfo().displayName;
+    log(`已刷新${name}作家助手窗口。`);
   } catch (error) {
     log(`刷新作家助手窗口失败：${error.message}`);
   }
@@ -2075,7 +2222,8 @@ els.reloadWriterWindowBtn.addEventListener('click', async () => {
 els.loginReadyBtn.addEventListener('click', async () => {
   loginConfirmed = true;
   setLoginState('用户已确认');
-  log('用户确认已登录番茄作家助手工作台。');
+  const name = platformInfo().displayName;
+  log(`用户确认已登录${name}作家助手工作台。`);
   await detectCurrentPage();
 });
 els.chapterPageReadyBtn.addEventListener('click', async () => {
@@ -2116,6 +2264,28 @@ els.stopBtn.addEventListener('click', () => {
   log('已请求停止任务，当前自动化步骤会尽快中断。');
   resumeTask();
 });
+els.platformSelector.addEventListener('change', async () => {
+  const newPlatform = els.platformSelector.value;
+  if (newPlatform === currentPlatform) return;
+  if (taskRunning) {
+    log('上传任务运行中，请先停止任务再切换平台。');
+    els.platformSelector.value = currentPlatform;
+    return;
+  }
+  currentPlatform = newPlatform;
+  await persistSettings();
+  updatePlatformUI();
+  setupPlatformEventListeners(currentPlatform);
+  try {
+    const state = await writerApi().getWindowState();
+    updateWriterWindowState(state);
+  } catch (_) {
+    updateWriterWindowState({ open: false });
+  }
+  applyHistoricalRecords();
+  renderChapters();
+});
+
 els.saveReportBtn.addEventListener('click', saveReport);
 els.clearLogBtn.addEventListener('click', () => {
   els.logBox.textContent = '';

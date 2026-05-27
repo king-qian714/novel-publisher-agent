@@ -8,10 +8,13 @@ app.setName('番茄小说草稿上传助手');
 
 let mainWindow;
 let writerWindow;
+let writerPlatform = '';
 
 const FANQIE_PARTITION = 'persist:fanqie-writer';
+const QIMAO_PARTITION = 'persist:qimao-writer';
 // 直接进入番茄作家助手 PC 工作台/作品管理，而不是番茄小说阅读站首页。
 const DEFAULT_FANQIE_URL = 'https://fanqienovel.com/main/writer/book-manage';
+const DEFAULT_QIMAO_URL = 'https://zuozhe.qimao.com/front/index';
 
 function createWindow() {
   const { workAreaSize } = screen.getPrimaryDisplay();
@@ -60,14 +63,32 @@ function emitWriterWindowState(eventName) {
   });
 }
 
-function openWriterWindow(targetUrl = DEFAULT_FANQIE_URL) {
+function platformPartition(platform) {
+  return platform === 'qimao' ? QIMAO_PARTITION : FANQIE_PARTITION;
+}
+
+function platformDefaultUrl(platform) {
+  return platform === 'qimao' ? DEFAULT_QIMAO_URL : DEFAULT_FANQIE_URL;
+}
+
+function platformWindowTitle(platform) {
+  return platform === 'qimao' ? '七猫作家助手工作台' : '番茄作家助手工作台';
+}
+
+function openWriterWindow(platform = 'fanqie', targetUrl = null) {
+  if (writerWindow && !writerWindow.isDestroyed() && writerPlatform !== platform) {
+    writerWindow.close();
+    writerWindow = null;
+    writerPlatform = '';
+  }
+
   if (writerWindow && !writerWindow.isDestroyed()) {
     if (writerWindow.isMinimized()) {
       if (typeof writerWindow.showInactive === 'function') writerWindow.showInactive();
       else writerWindow.restore();
     }
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.focus();
-    emitWriterWindowState('fanqie:writer-window-ready');
+    emitWriterWindowState(`${platform}:writer-window-ready`);
     return;
   }
 
@@ -76,20 +97,21 @@ function openWriterWindow(targetUrl = DEFAULT_FANQIE_URL) {
     : screen.getPrimaryDisplay();
   const writerWidth = Math.min(1420, Math.max(1180, display.workArea.width - 160));
   const writerHeight = Math.min(920, Math.max(760, display.workArea.height - 120));
+  const url = targetUrl || platformDefaultUrl(platform);
 
   writerWindow = new BrowserWindow({
     width: writerWidth,
     height: writerHeight,
     minWidth: 1100,
     minHeight: 720,
-    title: '番茄作家助手工作台',
+    title: platformWindowTitle(platform),
     modal: false,
     show: false,
     resizable: true,
     maximizable: true,
     backgroundColor: '#ffffff',
     webPreferences: {
-      partition: FANQIE_PARTITION,
+      partition: platformPartition(platform),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -98,8 +120,8 @@ function openWriterWindow(targetUrl = DEFAULT_FANQIE_URL) {
   });
 
   writerWindow.setMenuBarVisibility(false);
-  writerWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url) writerWindow.loadURL(url);
+  writerWindow.webContents.setWindowOpenHandler(({ url: popupUrl }) => {
+    if (popupUrl) writerWindow.loadURL(popupUrl);
     return { action: 'deny' };
   });
 
@@ -114,64 +136,63 @@ function openWriterWindow(targetUrl = DEFAULT_FANQIE_URL) {
         mainWindow.show();
         mainWindow.focus();
       }
-      emitWriterWindowState('fanqie:writer-window-ready');
+      emitWriterWindowState(`${platform}:writer-window-ready`);
     }
   });
 
-  writerWindow.webContents.on('did-navigate', (_event, url) => {
-    sendToMain('fanqie:writer-window-navigated', {
+  const emitNavigate = (url) => {
+    sendToMain(`${platform}:writer-window-navigated`, {
       open: true,
       url,
       title: writerWindow && !writerWindow.isDestroyed() ? writerWindow.webContents.getTitle() : '',
       isMinimized: writerWindow && !writerWindow.isDestroyed() ? writerWindow.isMinimized() : false,
       isMaximized: writerWindow && !writerWindow.isDestroyed() ? writerWindow.isMaximized() : false
     });
+  };
+
+  writerWindow.webContents.on('did-navigate', (_event, navUrl) => {
+    emitNavigate(navUrl);
   });
 
-  writerWindow.webContents.on('did-navigate-in-page', (_event, url) => {
-    sendToMain('fanqie:writer-window-navigated', {
-      open: true,
-      url,
-      title: writerWindow && !writerWindow.isDestroyed() ? writerWindow.webContents.getTitle() : '',
-      isMinimized: writerWindow && !writerWindow.isDestroyed() ? writerWindow.isMinimized() : false,
-      isMaximized: writerWindow && !writerWindow.isDestroyed() ? writerWindow.isMaximized() : false
-    });
+  writerWindow.webContents.on('did-navigate-in-page', (_event, navUrl) => {
+    emitNavigate(navUrl);
   });
 
   writerWindow.webContents.on('did-finish-load', () => {
-    emitWriterWindowState('fanqie:writer-window-loaded');
+    emitWriterWindowState(`${platform}:writer-window-loaded`);
   });
 
   writerWindow.webContents.on('console-message', (_event, _level, message) => {
     if (typeof message === 'string' && message.includes('[小说上传助手]')) {
-      sendToMain('fanqie:writer-console', { message });
+      sendToMain(`${platform}:writer-console`, { message });
     }
   });
 
   writerWindow.on('resize', () => {
-    emitWriterWindowState('fanqie:writer-window-resized');
+    emitWriterWindowState(`${platform}:writer-window-resized`);
   });
   writerWindow.on('minimize', () => {
-    emitWriterWindowState('fanqie:writer-window-resized');
+    emitWriterWindowState(`${platform}:writer-window-resized`);
   });
   writerWindow.on('restore', () => {
-    emitWriterWindowState('fanqie:writer-window-resized');
+    emitWriterWindowState(`${platform}:writer-window-resized`);
   });
   writerWindow.on('maximize', () => {
-    emitWriterWindowState('fanqie:writer-window-resized');
+    emitWriterWindowState(`${platform}:writer-window-resized`);
   });
   writerWindow.on('unmaximize', () => {
-    emitWriterWindowState('fanqie:writer-window-resized');
+    emitWriterWindowState(`${platform}:writer-window-resized`);
   });
 
   writerWindow.on('closed', () => {
+    writerPlatform = '';
     writerWindow = null;
-    sendToMain('fanqie:writer-window-closed', { open: false, url: '', title: '' });
-    // 兼容上一版的事件名，避免渲染端旧监听失效。
+    sendToMain(`${platform}:writer-window-closed`, { open: false, url: '', title: '' });
     sendToMain('fanqie:login-popup-closed', { open: false, url: '', title: '' });
   });
 
-  writerWindow.loadURL(targetUrl || DEFAULT_FANQIE_URL);
+  writerWindow.loadURL(url);
+  writerPlatform = platform;
 }
 
 function getWriterWindowOrThrow() {
@@ -473,14 +494,20 @@ ipcMain.handle('window:control', async (_event, action) => {
 
 ipcMain.handle('fanqie:open-writer-window', async (_event, payload) => {
   const targetUrl = payload?.url || DEFAULT_FANQIE_URL;
-  openWriterWindow(targetUrl);
+  openWriterWindow('fanqie', targetUrl);
   return { ok: true };
 });
 
 // 兼容上一版命名。
 ipcMain.handle('fanqie:open-login-popup', async (_event, payload) => {
   const targetUrl = payload?.url || DEFAULT_FANQIE_URL;
-  openWriterWindow(targetUrl);
+  openWriterWindow('fanqie', targetUrl);
+  return { ok: true };
+});
+
+ipcMain.handle('qimao:open-writer-window', async (_event, payload) => {
+  const targetUrl = payload?.url || DEFAULT_QIMAO_URL;
+  openWriterWindow('qimao', targetUrl);
   return { ok: true };
 });
 
@@ -508,6 +535,35 @@ ipcMain.handle('fanqie:execute-js-safe', async (_event, script) => {
 });
 
 ipcMain.handle('fanqie:reload-writer-window', async () => {
+  const targetWindow = getWriterWindowOrThrow();
+  targetWindow.reload();
+  return { ok: true };
+});
+
+ipcMain.handle('qimao:execute-js', async (_event, script) => {
+  const targetWindow = getWriterWindowOrThrow();
+  try {
+    return await targetWindow.webContents.executeJavaScript(script, true);
+  } catch (error) {
+    const url = targetWindow.webContents.getURL();
+    const message = error && error.message ? error.message : String(error);
+    throw new Error(`${message}; url: ${url || 'unknown'}`);
+  }
+});
+
+ipcMain.handle('qimao:execute-js-safe', async (_event, script) => {
+  const targetWindow = getWriterWindowOrThrow();
+  try {
+    const value = await targetWindow.webContents.executeJavaScript(script, true);
+    return { ok: true, value, url: targetWindow.webContents.getURL() };
+  } catch (error) {
+    const url = targetWindow.webContents.getURL();
+    const message = error && error.message ? error.message : String(error);
+    return { ok: false, message, url: url || '' };
+  }
+});
+
+ipcMain.handle('qimao:reload-writer-window', async () => {
   const targetWindow = getWriterWindowOrThrow();
   targetWindow.reload();
   return { ok: true };
@@ -640,13 +696,13 @@ ipcMain.handle('fanqie:click-workflow-action', async (_event, action) => {
       contextBoost: ['错别字|错字|病句|语病|校对|纠错|错词|别字']
     },
     risk_cancel: {
-      label: '风险检测取消',
+      label: '风险检测取消/仅基础检测',
       actionKey: 'risk_cancel',
-      exact: ['^(取消|暂不处理|继续修改|返回修改|稍后检测|不检测)$'],
-      loose: ['取消|暂不处理|返回修改|继续修改|稍后检测|不检测'],
+      exact: ['^(取消|暂不处理|继续修改|返回修改|稍后检测|不检测|仅基础检测)$'],
+      loose: ['取消|暂不处理|返回修改|继续修改|稍后检测|不检测|仅基础检测'],
       negative: ['确认发布|确定发布|直接发布|立即发布|存草稿|保存草稿|下一步|上一步'],
-      requiredContext: ['内容风险|风险检测|风险提示|安全检测|违规|敏感|审核提示|存在风险'],
-      contextBoost: ['内容风险|风险检测|风险提示|安全检测|违规|敏感|审核提示|存在风险']
+      requiredContext: ['内容风险|风险检测|风险提示|安全检测|违规|敏感|审核提示|存在风险|AI生成'],
+      contextBoost: ['内容风险|风险检测|风险提示|安全检测|违规|敏感|审核提示|存在风险|AI生成']
     },
     typo_cancel: {
       label: '错别字检测取消',
@@ -831,9 +887,28 @@ ipcMain.handle('fanqie:click-workflow-action', async (_event, action) => {
         }]);
       }
       function findRiskCancelButton() {
-        const riskModal = findModalByText(/是否进行内容风险检测|开启后.*风险内容|风险提示功能|消耗此功能使用次数/, /错别字|发布设置|确认发布/);
+        // 先按文案找弹窗
+        let riskModal = findModalByText(/内容风险|风险检测|风险提示|安全检测|AI生成内容/, /错别字|发布设置|确认发布/);
+        if (!riskModal) {
+          // 文案没匹配到，改为根据"仅基础检测"按钮反查弹窗
+          const btn = Array.from(document.querySelectorAll('button,a,[role="button"]'))
+            .find((el) => {
+              if (!visible(el)) return false;
+              const t = (el.innerText || el.textContent || '').trim();
+              return t === '仅基础检测';
+            });
+          riskModal = btn ? (btn.closest('.arco-modal,.arco-modal-wrapper,.semi-modal,.byte-modal,[role="dialog"],.modal,.dialog') || btn.closest('.arco-modal-footer,.arco-modal-body')?.closest('.arco-modal')) : null;
+        }
         if (!riskModal) return null;
-        const best = findModalFooterButton(riskModal, /^取消$/, false);
+        let best = findModalFooterButton(riskModal, /^仅基础检测$/, false);
+        if (best) return rectCenterPayload(best.rect, '内容风险检测：仅基础检测', 'risk_cancel_basic_detection', [{
+          text: best.text,
+          x: Math.round(best.rect.left + best.rect.width / 2),
+          y: Math.round(best.rect.top + best.rect.height / 2),
+          score: Math.round(best.score),
+          disabled: best.disabled
+        }]);
+        best = findModalFooterButton(riskModal, /^取消$/, false);
         if (!best) return null;
         return rectCenterPayload(best.rect, '内容风险检测：取消', 'risk_cancel_arco_modal_secondary', [{
           text: best.text,
@@ -873,7 +948,7 @@ ipcMain.handle('fanqie:click-workflow-action', async (_event, action) => {
       if (config.actionKey === 'risk_cancel') {
         const directRiskCancel = findRiskCancelButton();
         if (directRiskCancel) return directRiskCancel;
-        return { ok: false, message: '未找到内容风险检测弹窗中的“取消”按钮，已禁止点击其他按钮', candidates: [], url: location.href };
+        return { ok: false, message: '未找到内容风险检测弹窗中的“取消”/“仅基础检测”按钮', candidates: [], url: location.href };
       }
       if (config.actionKey === 'use_ai') {
         const directUseAiRadio = findUseAiYesRadio();
@@ -1051,12 +1126,67 @@ ipcMain.handle('fanqie:get-window-state', async () => {
   };
 });
 
+function controlWriterWindow(targetWindow, action) {
+  switch (action) {
+    case 'minimize':
+      targetWindow.minimize();
+      break;
+    case 'maximize':
+      if (targetWindow.isMinimized()) targetWindow.restore();
+      targetWindow.maximize();
+      break;
+    case 'toggle-maximize':
+      if (targetWindow.isMinimized()) targetWindow.restore();
+      if (targetWindow.isMaximized()) targetWindow.unmaximize();
+      else targetWindow.maximize();
+      break;
+    case 'restore':
+      targetWindow.restore();
+      break;
+    case 'focus':
+      if (targetWindow.isMinimized()) targetWindow.restore();
+      else if (typeof targetWindow.showInactive === 'function') targetWindow.showInactive();
+      break;
+    default:
+      throw new Error(`未知作家窗口控制动作：${action}`);
+  }
+}
+
+ipcMain.handle('qimao:control-writer-window', async (_event, action) => {
+  const targetWindow = getWriterWindowOrThrow();
+  controlWriterWindow(targetWindow, action);
+  emitWriterWindowState('qimao:writer-window-resized');
+  return {
+    ok: true,
+    open: true,
+    url: targetWindow.webContents.getURL(),
+    title: targetWindow.webContents.getTitle(),
+    isMinimized: targetWindow.isMinimized(),
+    isMaximized: targetWindow.isMaximized()
+  };
+});
+
+ipcMain.handle('qimao:get-window-state', async () => {
+  if (!writerWindow || writerWindow.isDestroyed()) {
+    return { open: false, platform: 'qimao', url: '', title: '' };
+  }
+  return {
+    open: true,
+    platform: 'qimao',
+    url: writerWindow.webContents.getURL(),
+    title: writerWindow.webContents.getTitle(),
+    isMinimized: writerWindow.isMinimized(),
+    isMaximized: writerWindow.isMaximized()
+  };
+});
+
 ipcMain.handle('settings:load', async () => {
   return readJsonFile(settingsPath(), {
     removeTitleLine: true,
     recursive: false,
     uploadDelayMs: 2500,
-    fanqieUrl: DEFAULT_FANQIE_URL
+    fanqieUrl: DEFAULT_FANQIE_URL,
+    qimaoUrl: DEFAULT_QIMAO_URL
   });
 });
 
@@ -1096,7 +1226,7 @@ ipcMain.handle('records:mark-success', async (_event, payload) => {
 });
 
 ipcMain.handle('report:save', async (_event, payload) => {
-  const defaultName = `番茄草稿上传报告-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.json`;
+  const defaultName = `草稿上传报告-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.json`;
   const result = await dialog.showSaveDialog(mainWindow, {
     title: '保存上传报告',
     defaultPath: defaultName,

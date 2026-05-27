@@ -3,16 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>番茄小说草稿上传助手</title>
+    <title id="pageTitle">小说草稿上传助手</title>
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
     <div class="app-shell">
       <div class="window-titlebar">
         <div class="window-drag-zone">
-          <span class="app-mark">番</span>
-          <span class="window-title">番茄小说草稿上传助手</span>
-          <span class="window-caption">自动草稿 / 直接发布工作台</span>
+          <span id="appMark" class="app-mark">番</span>
+          <span id="windowTitle" class="window-title">小说草稿上传助手</span>
+          <span id="windowCaption" class="window-caption">自动草稿 / 直接发布工作台</span>
         </div>
         <div class="window-controls">
           <button id="minimizeMainWindowBtn" class="window-control" title="最小化">—</button>
@@ -23,11 +23,17 @@
 
       <header class="topbar">
         <div>
-          <div class="app-title">番茄小说草稿上传助手</div>
-          <div class="app-subtitle">先打开番茄作家助手工作台 → 进入作品章节管理 → 扫描本地章节 → 勾选上传草稿或完整发布</div>
+          <div class="app-title-row">
+            <select id="platformSelector" class="platform-switch">
+              <option value="fanqie">番茄小说</option>
+              <option value="qimao">七猫小说</option>
+            </select>
+            <span id="appTitle" class="app-title">草稿上传助手</span>
+          </div>
+          <div id="appSubtitle" class="app-subtitle">先打开作家助手工作台 → 进入作品章节管理 → 扫描本地章节 → 勾选上传草稿或完整发布</div>
         </div>
         <div class="top-actions">
-          <button id="openFanqieBtn" class="primary">打开作家助手工作台</button>
+          <button id="openWriterBtn" class="primary">打开作家助手工作台</button>
           <button id="saveReportBtn" class="secondary">导出报告</button>
         </div>
       </header>
@@ -37,7 +43,7 @@
           <div class="card controls-card step-card primary-step">
             <div class="section-title">1. 登录并进入章节管理</div>
             <p class="hint">
-              只打开番茄作家助手 PC 工作台窗口。登录 Cookie 会保存在本机有效期内，未过期时无需重复扫码。请在弹窗中登录后手动进入目标作品的章节管理/目录页，上传时不要关闭该窗口。
+              只打开作家助手 PC 工作台窗口。登录 Cookie 会保存在本机有效期内，未过期时无需重复扫码。请在弹窗中登录后手动进入目标作品的章节管理/目录页，上传时不要关闭该窗口。
             </p>
             <div class="row gap wrap">
               <button id="loginPopupBtn" class="primary">打开作家助手窗口</button>
