@@ -1406,35 +1406,45 @@ function buildUploadScript(title, content, options = {}) {
 
       function setNativeValue(el, value) {
         const win = ownerWindow(el);
-        const doc = el.ownerDocument || document;
         const tag = el.tagName.toLowerCase();
         const proto = tag === 'textarea' ? win.HTMLTextAreaElement.prototype : win.HTMLInputElement.prototype;
         const nativeSetter = (Object.getOwnPropertyDescriptor(proto, 'value') || {}).set;
-        const ownDesc = Object.getOwnPropertyDescriptor(el, 'value');
-        const hasOwnAccessor = ownDesc && ownDesc.set;
 
         try { el.focus(); } catch (_) {}
         try { el.select(); } catch (_) {}
 
-        if (hasOwnAccessor) {
-          try { ownDesc.set.call(el, value); } catch (_) {}
+        const fiberKey = Object.keys(el).find((k) => k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$'));
+        if (fiberKey) {
+          let fiber = el[fiberKey];
+          while (fiber) {
+            const props = fiber.memoizedProps || fiber.pendingProps;
+            if (props && typeof props.onChange === 'function') {
+              if (nativeSetter) nativeSetter.call(el, value);
+              else el.value = value;
+              try { props.onChange({ target: el, currentTarget: el }); } catch (_) {}
+              if (el.value === value) return;
+            }
+            fiber = fiber.return;
+          }
+        }
+
+        const ownDesc = Object.getOwnPropertyDescriptor(el, 'value');
+        if (ownDesc && ownDesc.set) {
+          ownDesc.set.call(el, value);
           el.dispatchEvent(new win.InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
           el.dispatchEvent(new win.Event('change', { bubbles: true }));
           if (el.value === value) return;
         }
 
         if (nativeSetter) {
-          try { nativeSetter.call(el, value); } catch (_) {}
+          nativeSetter.call(el, value);
           el.dispatchEvent(new win.InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
           el.dispatchEvent(new win.Event('change', { bubbles: true }));
           if (el.value === value) return;
         }
 
-        Object.defineProperty(el, 'value', { get: () => value, set: () => {}, configurable: true });
-        try { nativeSetter && nativeSetter.call(el, value); } catch (_) {}
-        el.dispatchEvent(new win.InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
-        el.dispatchEvent(new win.Event('change', { bubbles: true }));
-        delete el.value;
+        try { el.select(); } catch (_) {}
+        try { win.document.execCommand('insertText', false, value); } catch (_) {}
         if (el.value === value) return;
 
         el.value = value;
