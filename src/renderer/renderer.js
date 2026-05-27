@@ -1406,49 +1406,35 @@ function buildUploadScript(title, content, options = {}) {
 
       function setNativeValue(el, value) {
         const win = ownerWindow(el);
-        const tag = el.tagName.toLowerCase();
-        const isInput = tag === 'input';
-        const proto = isInput ? win.HTMLInputElement.prototype : win.HTMLTextAreaElement.prototype;
+        const doc = el.ownerDocument || document;
+
         try { el.focus(); } catch (_) {}
         try { el.select(); } catch (_) {}
 
-        const attempt = (setter) => {
+        try {
+          const ok = doc.execCommand('insertText', false, value);
+          if (ok && el.value === value) return;
+        } catch (_) {}
+
+        const tag = el.tagName.toLowerCase();
+        const proto = tag === 'textarea' ? win.HTMLTextAreaElement.prototype : win.HTMLInputElement.prototype;
+        const setter = (Object.getOwnPropertyDescriptor(proto, 'value') || {}).set;
+        if (setter) {
           setter.call(el, value);
-          el.dispatchEvent(new win.Event('input', { bubbles: true }));
-          try { el.dispatchEvent(new win.InputEvent('input', { bubbles: true, inputType: 'insertText', data: value })); } catch (_) {}
+          el.dispatchEvent(new win.InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
           el.dispatchEvent(new win.Event('change', { bubbles: true }));
-        };
-
-        try {
-          const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value').set;
-          if (nativeSetter) { attempt(nativeSetter); if (el.value === value) return; }
-        } catch (_) {}
-        try {
-          const ownDescriptor = Object.getOwnPropertyDescriptor(el, 'value');
-          if (ownDescriptor && ownDescriptor.set) { attempt(ownDescriptor.set); if (el.value === value) return; }
-        } catch (_) {}
-
-        if (el.value !== value || !el.value) {
-          try { el.focus(); } catch (_) {}
-          try { el.setSelectionRange(0, el.value ? el.value.length : 0); } catch (_) {}
-          el.value = value;
-          el.dispatchEvent(new win.Event('beforeinput', { bubbles: true, cancelable: true }));
-          try { el.dispatchEvent(new win.InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: value })); } catch (_) {}
-          el.dispatchEvent(new win.Event('input', { bubbles: true }));
-          try { el.dispatchEvent(new win.InputEvent('input', { bubbles: true, inputType: 'insertText', data: value })); } catch (_) {}
-          el.dispatchEvent(new win.Event('change', { bubbles: true }));
-          try { win.document.execCommand('selectAll', false); } catch (_) {}
-          try { win.document.execCommand('insertText', false, value); } catch (_) {}
-          el.dispatchEvent(new win.Event('input', { bubbles: true }));
-          el.dispatchEvent(new win.Event('change', { bubbles: true }));
-
-          if (el.value !== value && !el.value) {
-            try { el.value = value; } catch (_) {}
-            try { el.setAttribute('value', value); } catch (_) {}
-            el.dispatchEvent(new win.Event('input', { bubbles: true }));
-            el.dispatchEvent(new win.Event('change', { bubbles: true }));
-          }
+          if (el.value === value) return;
         }
+
+        try { el.focus(); } catch (_) {}
+        try { el.setSelectionRange(0, el.value ? el.value.length : 0); } catch (_) {}
+        try { doc.execCommand('insertText', false, value); } catch (_) {}
+        if (el.value === value) return;
+
+        el.value = value;
+        try { el.setAttribute('value', value); } catch (_) {}
+        el.dispatchEvent(new win.InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
+        el.dispatchEvent(new win.Event('change', { bubbles: true }));
       }
 
       async function insertTextIntoEditable(el, value, replaceAll) {
