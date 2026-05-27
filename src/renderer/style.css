@@ -435,6 +435,27 @@ table,
   font-size: 12px;
 }
 
+.chapter-search-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.chapter-search-input {
+  width: 120px;
+  height: 26px;
+  padding: 0 6px;
+  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  outline: none;
+}
+
+.chapter-search-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(255, 90, 61, 0.12);
+}
+
 .table-wrap {
   min-height: 0;
   flex: 1;

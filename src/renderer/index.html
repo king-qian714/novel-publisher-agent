@@ -46,7 +46,6 @@
               只打开作家助手 PC 工作台窗口。登录 Cookie 会保存在本机有效期内，未过期时无需重复扫码。请在弹窗中登录后手动进入目标作品的章节管理/目录页，上传时不要关闭该窗口。
             </p>
             <div class="row gap wrap">
-              <button id="loginPopupBtn" class="primary">打开作家助手窗口</button>
               <button id="minimizeWriterWindowBtn" class="secondary">最小化作家窗口</button>
               <button id="toggleMaxWriterWindowBtn" class="secondary">最大化/还原</button>
               <button id="reloadWriterWindowBtn" class="secondary">刷新作家窗口</button>
@@ -122,11 +121,15 @@
             <span id="chapterCount">0 章</span>
           </div>
           <div class="chapter-toolbar">
-            <span>默认不勾选章节，避免误传。可勾选要上传的章节，或点击“查看”预览正文。</span>
+            <span>默认不勾选章节，避免误传。可勾选要上传的章节，或点击"查看"预览正文。</span>
             <div class="row gap wrap">
               <button id="selectAllVisibleBtn" class="tiny">全选</button>
               <button id="clearSelectedBtn" class="tiny">清空选择</button>
               <button id="invertSelectedBtn" class="tiny">反选</button>
+              <span class="chapter-search-group">
+                <input id="chapterSearchInput" type="number" min="1" placeholder="跳转到章节号" class="chapter-search-input" />
+                <button id="chapterJumpBtn" class="tiny primary">跳转</button>
+              </span>
             </div>
           </div>
           <div class="table-wrap">

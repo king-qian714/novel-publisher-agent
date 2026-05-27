@@ -13,7 +13,8 @@ const els = {
   uploadDelay: document.getElementById('uploadDelay'),
   publishAction: document.getElementById('publishAction'),
   bookName: document.getElementById('bookName'),
-  loginPopupBtn: document.getElementById('loginPopupBtn'),
+  chapterSearchInput: document.getElementById('chapterSearchInput'),
+  chapterJumpBtn: document.getElementById('chapterJumpBtn'),
   minimizeWriterWindowBtn: document.getElementById('minimizeWriterWindowBtn'),
   toggleMaxWriterWindowBtn: document.getElementById('toggleMaxWriterWindowBtn'),
   reloadWriterWindowBtn: document.getElementById('reloadWriterWindowBtn'),
@@ -1406,23 +1407,47 @@ function buildUploadScript(title, content, options = {}) {
       function setNativeValue(el, value) {
         const win = ownerWindow(el);
         const tag = el.tagName.toLowerCase();
-        const proto = tag === 'textarea' ? win.HTMLTextAreaElement.prototype : win.HTMLInputElement.prototype;
-        const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+        const isInput = tag === 'input';
+        const proto = isInput ? win.HTMLInputElement.prototype : win.HTMLTextAreaElement.prototype;
         try { el.focus(); } catch (_) {}
-        try { el.select && el.select(); } catch (_) {}
-        if (descriptor && descriptor.set) descriptor.set.call(el, value);
-        else el.value = value;
-        el.dispatchEvent(new win.Event('input', { bubbles: true }));
-        try { el.dispatchEvent(new win.InputEvent('input', { bubbles: true, inputType: 'insertText', data: value })); } catch (_) {}
-        el.dispatchEvent(new win.Event('change', { bubbles: true }));
-        // React 受控组件回退：如果值未被框架接受，用 execCommand 模拟用户输入
+        try { el.select(); } catch (_) {}
+
+        const attempt = (setter) => {
+          setter.call(el, value);
+          el.dispatchEvent(new win.Event('input', { bubbles: true }));
+          try { el.dispatchEvent(new win.InputEvent('input', { bubbles: true, inputType: 'insertText', data: value })); } catch (_) {}
+          el.dispatchEvent(new win.Event('change', { bubbles: true }));
+        };
+
+        try {
+          const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+          if (nativeSetter) { attempt(nativeSetter); if (el.value === value) return; }
+        } catch (_) {}
+        try {
+          const ownDescriptor = Object.getOwnPropertyDescriptor(el, 'value');
+          if (ownDescriptor && ownDescriptor.set) { attempt(ownDescriptor.set); if (el.value === value) return; }
+        } catch (_) {}
+
         if (el.value !== value || !el.value) {
           try { el.focus(); } catch (_) {}
           try { el.setSelectionRange(0, el.value ? el.value.length : 0); } catch (_) {}
-          try { el.dispatchEvent(new win.Event('beforeinput', { bubbles: true, cancelable: true })); } catch (_) {}
+          el.value = value;
+          el.dispatchEvent(new win.Event('beforeinput', { bubbles: true, cancelable: true }));
+          try { el.dispatchEvent(new win.InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: value })); } catch (_) {}
+          el.dispatchEvent(new win.Event('input', { bubbles: true }));
+          try { el.dispatchEvent(new win.InputEvent('input', { bubbles: true, inputType: 'insertText', data: value })); } catch (_) {}
+          el.dispatchEvent(new win.Event('change', { bubbles: true }));
+          try { win.document.execCommand('selectAll', false); } catch (_) {}
           try { win.document.execCommand('insertText', false, value); } catch (_) {}
           el.dispatchEvent(new win.Event('input', { bubbles: true }));
           el.dispatchEvent(new win.Event('change', { bubbles: true }));
+
+          if (el.value !== value && !el.value) {
+            try { el.value = value; } catch (_) {}
+            try { el.setAttribute('value', value); } catch (_) {}
+            el.dispatchEvent(new win.Event('input', { bubbles: true }));
+            el.dispatchEvent(new win.Event('change', { bubbles: true }));
+          }
         }
       }
 
@@ -2156,6 +2181,29 @@ els.invertSelectedBtn.addEventListener('click', () => {
   renderChapters();
 });
 
+function jumpToChapter() {
+  const target = parseInt(els.chapterSearchInput.value, 10);
+  if (isNaN(target) || target < 1) {
+    log('请输入有效的章节号（正整数）。');
+    return;
+  }
+  const index = chapters.findIndex((ch) => ch.index === target);
+  if (index === -1) {
+    log(`未找到第 ${target} 章。`);
+    return;
+  }
+  selectedIndex = index;
+  renderChapters();
+  const row = els.chapterTableBody.querySelector(`tr[data-index="${index}"]`);
+  if (row) row.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  log(`已跳转到第 ${target} 章（${chapters[index].title || chapters[index].fileName}）。`);
+}
+
+els.chapterSearchInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') jumpToChapter();
+});
+els.chapterJumpBtn.addEventListener('click', jumpToChapter);
+
 els.closePreviewBtn.addEventListener('click', hideChapterPreview);
 els.previewModal.addEventListener('click', (event) => {
   if (event.target === els.previewModal) hideChapterPreview();
@@ -2207,7 +2255,6 @@ els.toggleMainWindowBtn?.addEventListener('click', () => controlMainWindow('togg
 els.closeMainWindowBtn?.addEventListener('click', () => controlMainWindow('close'));
 
 els.openWriterBtn.addEventListener('click', handleOpenWriterWindow);
-els.loginPopupBtn.addEventListener('click', handleOpenWriterWindow);
 els.minimizeWriterWindowBtn.addEventListener('click', () => controlWriterWindow('minimize', '已最小化作家窗口。'));
 els.toggleMaxWriterWindowBtn.addEventListener('click', () => controlWriterWindow('toggle-maximize', '已切换作家窗口最大化/还原状态。'));
 els.reloadWriterWindowBtn.addEventListener('click', async () => {
@@ -2284,6 +2331,8 @@ els.platformSelector.addEventListener('change', async () => {
   }
   applyHistoricalRecords();
   renderChapters();
+
+  handleOpenWriterWindow();
 });
 
 els.saveReportBtn.addEventListener('click', saveReport);
