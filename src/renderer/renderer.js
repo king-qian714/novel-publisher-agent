@@ -1587,18 +1587,6 @@ function buildUploadScript(title, content, options = {}) {
         }
         result.details.editorMode = fields.mode;
 
-        stage('填写章节号');
-        const numberField = findChapterNumberField(fields.titleField);
-        let filledNumberEl = null;
-        if (titleNumber && numberField) {
-          filledNumberEl = await fillChapterNumber(numberField);
-          await sleep(260);
-        }
-
-        stage('填写标题');
-        const filledTitleEl = await fillField(fields.titleField, titleText || title, true);
-        await sleep(500);
-
         stage('填写正文');
         const refreshedContentField = findContentField(fields.titleField);
         if (refreshedContentField) {
@@ -1612,6 +1600,18 @@ function buildUploadScript(title, content, options = {}) {
         }
         const filledContentEl = await fillField(fields.contentField, content, fields.mode !== 'markers' && fields.mode !== 'single-editor');
         await sleep(900);
+
+        stage('填写章节号');
+        const numberField = findChapterNumberField(fields.titleField);
+        let filledNumberEl = null;
+        if (titleNumber && numberField) {
+          filledNumberEl = await fillChapterNumber(numberField);
+          await sleep(260);
+        }
+
+        stage('填写标题');
+        const filledTitleEl = await fillField(fields.titleField, titleText || title, true);
+        await sleep(500);
 
         stage('校验内容');
         const pageText = allDocuments().map((doc) => doc.body ? doc.body.innerText : '').join('\n');
