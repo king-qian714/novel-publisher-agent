@@ -1406,66 +1406,21 @@ function buildUploadScript(title, content, options = {}) {
 
       function setNativeValue(el, value) {
         const win = ownerWindow(el);
-        const tag = el.tagName.toLowerCase();
-        const proto = tag === 'textarea' ? win.HTMLTextAreaElement.prototype : win.HTMLInputElement.prototype;
-        const nativeSetter = (Object.getOwnPropertyDescriptor(proto, 'value') || {}).set;
-
+        const doc = el.ownerDocument || document;
         try { el.focus(); } catch (_) {}
         try { el.select(); } catch (_) {}
 
-        const allKeys = Object.getOwnPropertyNames(el);
-        const fiberKey = allKeys.find((k) => k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$'));
-        const propsKey = allKeys.find((k) => k.startsWith('__reactProps$'));
-
-        function callOnChange(handler) {
-          if (nativeSetter) nativeSetter.call(el, value);
-          else el.value = value;
-          try { handler({ target: el, currentTarget: el }); } catch (_) {}
-          if (el.value === value) return true;
-          return false;
-        }
-
-        if (propsKey) {
-          const reactProps = el[propsKey];
-          if (reactProps && typeof reactProps.onChange === 'function') {
-            if (callOnChange(reactProps.onChange)) return;
-          }
-        }
-
-        if (fiberKey) {
-          let fiber = el[fiberKey];
-          while (fiber) {
-            const props = fiber.memoizedProps || fiber.pendingProps;
-            if (props && typeof props.onChange === 'function') {
-              if (callOnChange(props.onChange)) return;
-            }
-            fiber = fiber.return;
-          }
-        }
-
-        const ownDesc = Object.getOwnPropertyDescriptor(el, 'value');
-        if (ownDesc && ownDesc.set) {
-          ownDesc.set.call(el, value);
-          el.dispatchEvent(new win.InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
-          el.dispatchEvent(new win.Event('change', { bubbles: true }));
-          if (el.value === value) return;
-        }
-
-        if (nativeSetter) {
-          nativeSetter.call(el, value);
-          el.dispatchEvent(new win.InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
-          el.dispatchEvent(new win.Event('change', { bubbles: true }));
-          if (el.value === value) return;
-        }
-
-        try { el.select(); } catch (_) {}
-        try { win.document.execCommand('insertText', false, value); } catch (_) {}
+        try { doc.execCommand('insertText', false, value); } catch (_) {}
         if (el.value === value) return;
 
-        el.value = value;
-        try { el.setAttribute('value', value); } catch (_) {}
-        el.dispatchEvent(new win.InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
-        el.dispatchEvent(new win.Event('change', { bubbles: true }));
+        const tag = el.tagName.toLowerCase();
+        const proto = tag === 'textarea' ? win.HTMLTextAreaElement.prototype : win.HTMLInputElement.prototype;
+        const setter = (Object.getOwnPropertyDescriptor(proto, 'value') || {}).set;
+        if (setter) {
+          setter.call(el, value);
+          el.dispatchEvent(new win.InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
+          el.dispatchEvent(new win.Event('change', { bubbles: true }));
+        }
       }
 
       async function insertTextIntoEditable(el, value, replaceAll) {
