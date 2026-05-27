@@ -987,11 +987,20 @@ function normalizeUploadContent(content) {
 
 function buildUploadScript(title, content, options = {}) {
   const titleParts = parseChapterTitleParts(title);
+  let cleanContent = normalizeUploadContent(content);
+  const firstLine = cleanContent.split('\n').find((l) => l.trim());
+  if (firstLine) {
+    const firstLineClean = firstLine.trim();
+    const titleClean = (title || '').trim();
+    if (firstLineClean === titleClean || firstLineClean === (titleParts.titleText || '').trim()) {
+      cleanContent = cleanContent.split('\n').slice(1).join('\n').replace(/^\n+/, '');
+    }
+  }
   const payload = {
     title,
     titleNumber: titleParts.titleNumber,
     titleText: titleParts.titleText,
-    content: normalizeUploadContent(content),
+    content: cleanContent,
     shouldClickNew: options.clickNew !== false,
     saveDraft: options.saveDraft !== false
   };

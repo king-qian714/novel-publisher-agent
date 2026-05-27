@@ -340,7 +340,9 @@ function looksLikeChapterTitle(line) {
     new RegExp(`^第\\s*${chapterNumber}\\s*[章节张回]\\s*[\\s、:：.．\\-—]*.*$`, 'u'),
     new RegExp(`^第\\s*${chapterNumber}\\s*卷.*$`, 'u'),
     /^(序章|楔子|引子|尾声|后记)(\s+.*)?$/u,
-    /^(番外|番外篇)([\s\d０-９一二三四五六七八九十零〇、:：.．\-—].*)?$/u
+    /^(番外|番外篇)([\s\d０-９一二三四五六七八九十零〇、:：.．\-—].*)?$/u,
+    new RegExp(`^Chapter\\s+${chapterNumber}\\b.*$`, 'ui'),
+    new RegExp(`^${chapterNumber}\\s*[.、:：]\\s*.+$`, 'u')
   ];
 
   return patterns.some((pattern) => pattern.test(text));
