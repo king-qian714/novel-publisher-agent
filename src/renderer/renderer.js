@@ -354,6 +354,14 @@ async function sleepWithStop(ms, step = 250) {
   }
 }
 
+/**
+ * Strip "第X章" prefix from chapter titles (e.g. "第一章 开始" → "开始").
+ * Supports Chinese numerals, Arabic numerals, and traditional variants.
+ */
+function stripChapterPrefix(title) {
+  return title.replace(/^(第[0-9０-９零〇一二两三四五六七八九十百千万]+[章节张回部])\s*/, '');
+}
+
 function writerApi() {
   return currentPlatform === 'qimao' ? {
     executeJs: api.executeInQimaoWindow,
@@ -1802,8 +1810,27 @@ async function uploadOneChapter(chapter) {
       }
 
       if (!result) {
-        const readyState = await waitForWriterPageReady(editorPattern, 45000);
-        log(`新建章节编辑页已就绪：${readyState.url || '未知地址'}`);
+        if (currentPlatform === 'qimao') {
+          // Qimao opens editor as in-page overlay/modal - URL doesn't change, use DOM-based detection
+          log('等待七猫新建章节编辑区加载...');
+          try {
+            const editorReady = await withTimeout(
+              executeInWriterWindow(api.qimaoBuildWaitForEditorReadyScript()),
+              35000,
+              '等待七猫编辑区加载超时'
+            );
+            if (editorReady?.ready) {
+              log(`新建章节编辑区已就绪：${editorReady.url || '未知地址'}`);
+            } else {
+              log(`七猫编辑区状态：${editorReady?.message || '部分元素未就绪，尝试继续...'}`);
+            }
+          } catch (waitError) {
+            log(`等待七猫编辑区时出错，继续尝试：${waitError.message}`);
+          }
+        } else {
+          const readyState = await waitForWriterPageReady(editorPattern, 45000);
+          log(`新建章节编辑页已就绪：${readyState.url || '未知地址'}`);
+        }
       }
     } else {
       log('检测到当前已在新建章节编辑页，直接执行自动填写。');
@@ -1811,12 +1838,10 @@ async function uploadOneChapter(chapter) {
 
     if (!result) {
       const finalAction = els.publishAction.value || settings.publishAction || 'draft';
-      if (currentPlatform === 'qimao' && finalAction === 'none') {
-        log('完成后动作设置为“只填写不点击”，跳过七猫编辑页填写。');
-        result = { ok: true, skipped: true };
-      } else {
-        const qimaoSaveDraft = currentPlatform === 'qimao' ? (finalAction !== 'next') : false;
-        const platformOptions = { clickNew: false, saveDraft: qimaoSaveDraft };
+      {
+        const qimaoSaveDraft = currentPlatform === 'qimao' ? (finalAction === 'draft') : false;
+        const qimaoAutoPublish = currentPlatform === 'qimao' && finalAction === 'next';
+        const platformOptions = { clickNew: false, saveDraft: qimaoSaveDraft, autoPublish: qimaoAutoPublish };
         result = await withTimeout(
           executeInWriterWindow(buildPlatformUploadScript(chapter.title, chapter.body, platformOptions)),
           finalAction === 'next' ? 90000 : 45000,
@@ -1831,8 +1856,33 @@ async function uploadOneChapter(chapter) {
       log(`标题和正文已写入，完成后动作：${label}。`);
       if (finalAction === 'next') {
         if (currentPlatform === 'qimao') {
-          log('七猫发布流程由脚本内部完成，等待发布完成...');
-          await sleepWithStop(3000);
+          const publishMsg = result.message || '';
+          log(`七猫发布结果：${publishMsg}`);
+          if (/成功|完成/.test(publishMsg) || result.ok) {
+            await sleepWithStop(2000);
+            // Wait for page to return to chapter manage page (needed for loop upload)
+            log('等待七猫返回章节管理页...');
+            const manageWaitStart = Date.now();
+            const manageTimeout = 30000;
+            let returnedToManage = false;
+            while (Date.now() - manageWaitStart < manageTimeout) {
+              ensureTaskNotStopped();
+              try {
+                const detectResult = await executeInWriterWindowSafe(
+                  api.qimaoBuildPublishCompletionDetectionScript()
+                );
+                if (detectResult?.isManage || detectResult?.hasNewChapter) {
+                  log('七猫已返回章节管理页，准备下一章。');
+                  returnedToManage = true;
+                  break;
+                }
+              } catch (_) {}
+              await sleepWithStop(1000);
+            }
+            if (!returnedToManage) {
+              log('七猫页面未检测到章节管理页（可能仍在过渡），继续...');
+            }
+          }
         } else {
           const publishResult = await runDirectPublishFlow();
           result.publishInfo = publishResult.info || publishResult;
@@ -2089,7 +2139,9 @@ async function init() {
       settings.qimaoUrl = DEFAULT_QIMAO_URL;
     }
     records = await api.loadRecords();
-    if (!['draft', 'next', 'none'].includes(settings.publishAction)) settings.publishAction = 'draft';
+    if (!['draft', 'next', 'none'].includes(settings.publishAction)) {
+      settings.publishAction = currentPlatform === 'qimao' ? 'next' : 'draft';
+    }
   } catch (error) {
     log(`加载本地配置失败：${error.message}`);
   }
@@ -2097,7 +2149,7 @@ async function init() {
   els.removeTitleLine.checked = settings.removeTitleLine !== false;
   els.recursiveScan.checked = Boolean(settings.recursive);
   els.uploadDelay.value = String(settings.uploadDelayMs || 2500);
-  els.publishAction.value = settings.publishAction || 'draft';
+  els.publishAction.value = settings.publishAction || (currentPlatform === 'qimao' ? 'next' : 'draft');
   setLoginState('未确认');
   setPageState('未确认');
   setTaskState('空闲');
