@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('novelPublisher', {
   qimaoBuildClickPublishScript: qimao.buildClickPublishScript,
   qimaoBuildClickConfirmPublishScript: qimao.buildClickConfirmPublishScript,
   qimaoBuildPublishCompletionDetectionScript: qimao.buildPublishCompletionDetectionScript,
+  qimaoBuildWaitForEditorReadyScript: qimao.buildWaitForEditorReadyScript,
   qimaoDefaultUrl: qimao.defaultUrl,
   qimaoSessionPartition: qimao.sessionPartition,
   qimaoDisplayName: qimao.displayName,

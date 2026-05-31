@@ -79,12 +79,13 @@ function buildUploadScript(title, body, options = {}) {
     title: title || '',
     content: body || '',
     shouldClickNew: options.clickNew !== false,
-    saveDraft: options.saveDraft !== false
+    saveDraft: options.saveDraft !== false,
+    autoPublish: options.autoPublish === true
   };
 
   return `(${function runQimaoUpload(payload) {
     return (async () => {
-      const { title, content, shouldClickNew, saveDraft } = payload;
+      const { title, content, shouldClickNew, saveDraft, autoPublish } = payload;
       const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const result = { ok: false, step: '初始化', message: '', details: {} };
 
@@ -138,6 +139,7 @@ function buildUploadScript(title, body, options = {}) {
         const x = rect.left + rect.width / 2;
         const y = rect.top + rect.height / 2;
         target.scrollIntoView({ block: 'center', inline: 'center' });
+        target.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, cancelable: true, clientX: x, clientY: y }));
         target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 }));
         target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 }));
         target.click();
@@ -160,14 +162,26 @@ function buildUploadScript(title, body, options = {}) {
       }
 
       function findTitleField() {
-        const selectors = [
+        // Qimao specific: chapter name textarea with placeholder "请输入章节名称，最多20个字"
+        const qimaoSelectors = [
+          '.chapter-header textarea.el-textarea__inner',
+          '.chapter-name textarea',
+          '.chapter-index-name-wrap textarea',
+          'textarea[placeholder*="章节名称"]'
+        ];
+        for (const selector of qimaoSelectors) {
+          const found = Array.from(document.querySelectorAll(selector)).find(visible);
+          if (found) return found;
+        }
+        // Fallback generic selectors
+        const fallbackSelectors = [
           'input[placeholder*="标题"]',
           'textarea[placeholder*="标题"]',
           '[data-placeholder*="标题"]',
           '[aria-label*="标题"]',
           'input[placeholder*="请输入标题"]'
         ];
-        for (const selector of selectors) {
+        for (const selector of fallbackSelectors) {
           const found = Array.from(document.querySelectorAll(selector)).find(visible);
           if (found) return found;
         }
@@ -175,7 +189,26 @@ function buildUploadScript(title, body, options = {}) {
       }
 
       function findContentField() {
-        const selectors = [
+        // Qimao specific: target ONLY the main chapter editor, not author note or overlays
+        // Main editor is inside .chapter-editor, NOT inside .author-say-editor
+        const preciseSelectors = [
+          '.chapter-editor .q-contenteditable.edit-mask',
+          '.chapter-editor .q-contenteditable[contenteditable="true"]',
+          '.chapter-con .q-contenteditable.edit-mask',
+          '.q-contenteditable.book.font-size-16.edit-mask',
+          '.q-contenteditable:not(.search-mask):not(.line-mask):not(.contrast-mask):not(.font-size-14)'
+        ];
+        for (const selector of preciseSelectors) {
+          const found = Array.from(document.querySelectorAll(selector)).filter(visible);
+          if (found.length > 0) return found[0];
+        }
+        // Broader Qimao selector (exclude overlays by id)
+        const broadSelector = '.q-contenteditable[contenteditable="true"]';
+        const broad = Array.from(document.querySelectorAll(broadSelector))
+          .filter(el => visible(el) && !el.closest('.author-say-editor') && el.id !== 'js-search' && el.id !== 'js-line' && el.id !== 'js-contrast');
+        if (broad.length > 0) return broad[0];
+        // Fallback generic selectors
+        const fallbackSelectors = [
           '[contenteditable="true"]',
           'textarea[placeholder*="正文"]',
           'textarea[placeholder*="内容"]',
@@ -183,17 +216,38 @@ function buildUploadScript(title, body, options = {}) {
           '.ql-editor'
         ];
         const candidates = [];
-        for (const selector of selectors) {
+        for (const selector of fallbackSelectors) {
           candidates.push(...Array.from(document.querySelectorAll(selector)).filter(visible));
         }
         const scored = candidates.map((el) => {
           const rect = el.getBoundingClientRect();
           let score = rect.width * rect.height;
-          if (el.getAttribute('contenteditable') === 'true') score += 100000;
-          if (/ProseMirror|ql-editor|editor/i.test(el.className)) score += 50000;
+          if (/chapter-editor|chapter-con|edit-mask|q-contenteditable/i.test(el.className)) score += 50000;
+          if (/book/.test(el.className)) score += 30000;
+          if (el.closest('.author-say-editor')) score -= 100000;
           return { el, score };
         }).sort((a, b) => b.score - a.score);
         return scored[0] ? scored[0].el : null;
+      }
+
+      function findQimaoPublishBtn() {
+        // Prefer CSS class selector for Qimao styled buttons
+        const cssBtn = document.querySelector('a.qm-btn.default, button.qm-btn.default, a.qm-btn, button.qm-btn');
+        if (cssBtn && visible(cssBtn) && /立即发布|发布/.test(normalizeText(cssBtn.innerText || cssBtn.textContent))) {
+          return cssBtn;
+        }
+        // Fallback: text matching
+        return findByTexts(['立即发布', '发布章节', '发布'], ['确认发布', '确定发布', '存草稿', '保存']);
+      }
+
+      function findQimaoConfirmPublishBtn() {
+        // Prefer CSS class selector for Qimao confirmation button
+        const cssBtn = document.querySelector('a.qm-btn.important, button.qm-btn.important');
+        if (cssBtn && visible(cssBtn)) {
+          return cssBtn;
+        }
+        // Fallback: text matching
+        return findByTexts(['确认发布', '确定发布', '确认', '确定'], ['立即发布', '取消']);
       }
 
       try {
@@ -222,25 +276,84 @@ function buildUploadScript(title, body, options = {}) {
           if (tag === 'textarea' || tag === 'input') {
             setNativeValue(contentField, content);
           } else {
-            contentField.focus();
+            // Qimao Vue contenteditable: execCommand generates TRUSTED events (isTrusted=true)
+            // Synthetic dispatchEvent is isTrusted=false - Vue editors often reject untrusted events
+            const doc = contentField.ownerDocument || document;
+            const win = doc.defaultView || window;
+            const beforeLength = normalizeText(contentField.innerText || contentField.textContent || '').length;
+
+            try { contentField.focus(); } catch (_) {}
             await sleep(100);
-            const selection = window.getSelection();
-            const range = document.createRange();
-            range.selectNodeContents(contentField);
-            selection.removeAllRanges();
-            selection.addRange(range);
+
+            // Select all existing content (to replace it)
             try {
-              const data = new DataTransfer();
-              data.setData('text/plain', content);
-              const event = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data });
-              contentField.dispatchEvent(event);
+              const selection = win.getSelection();
+              const range = doc.createRange();
+              range.selectNodeContents(contentField);
+              selection.removeAllRanges();
+              selection.addRange(range);
             } catch (_) {}
-            if (!contentField.innerText || contentField.innerText.length < 10) {
-              try { document.execCommand('insertText', false, content); } catch (_) {}
+
+            // Helper: build HTML from content with paragraph splitting
+            function buildContentHTML(text) {
+              var paragraphs = text
+                .split(/\n{2,}/)
+                .map(function(p) { return p.trim(); })
+                .filter(Boolean);
+              if (paragraphs.length > 0) {
+                return paragraphs
+                  .map(function(p) { return '<p>' + p.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>') + '</p>'; })
+                  .join('');
+              }
+              return '<p>' + text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</p>';
             }
-            if (!contentField.innerText || contentField.innerText.length < 10) {
-              contentField.innerHTML = content.split('\\n\\n').map(p => '<p>' + p.trim().replace(/\\n/g, '<br>') + '</p>').join('');
+
+            function hasContentLength(el) {
+              return normalizeText(el.innerText || el.textContent || '').length;
             }
+
+            let hasContent = false;
+            var contentHTML = buildContentHTML(content);
+            var minLen = Math.min(10, normalizeText(content).length);
+
+            // Method 1: execCommand('insertHTML') - generates trusted events (isTrusted=true)
+            // Some editors only accept trusted events. This is deprecated but still works in many cases.
+            try {
+              if (contentHTML) doc.execCommand('insertHTML', false, contentHTML);
+            } catch (_) {}
+            await sleep(200);
+            hasContent = hasContentLength(contentField) > beforeLength + minLen;
+
+            // Method 2: Direct innerHTML + dispatch events for Vue editors
+            // Vue 2 contenteditable @input/v-model doesn't check event.isTrusted,
+            // so dispatching InputEvent('input') triggers Vue reactivity reliably.
+            if (!hasContent) {
+              contentField.innerHTML = contentHTML;
+              try { contentField.dispatchEvent(new win.InputEvent('beforeinput', { bubbles: true, cancelable: true })); } catch (_) {}
+              try { contentField.dispatchEvent(new win.InputEvent('input', { bubbles: true })); } catch (_) { contentField.dispatchEvent(new win.Event('input', { bubbles: true })); }
+              contentField.dispatchEvent(new win.Event('change', { bubbles: true }));
+              await sleep(100);
+              hasContent = hasContentLength(contentField) > beforeLength + minLen;
+            }
+
+            // Method 3: execCommand('insertText') - absolute last resort (plain text only, no formatting)
+            if (!hasContent) {
+              try {
+                var textSel = win.getSelection();
+                var textRange = doc.createRange();
+                textRange.selectNodeContents(contentField);
+                textSel.removeAllRanges();
+                textSel.addRange(textRange);
+                doc.execCommand('insertText', false, content);
+              } catch (_) {}
+              await sleep(200);
+              hasContent = hasContentLength(contentField) > beforeLength + minLen;
+            }
+
+            // Log result for debugging
+            const finalContentLength = normalizeText(contentField.innerText || contentField.textContent || '').length;
+            result.details.contentLength = finalContentLength;
+            result.details.contentInjected = hasContent;
           }
           await sleep(800);
         } else {
@@ -249,23 +362,51 @@ function buildUploadScript(title, body, options = {}) {
           return result;
         }
 
-        if (!saveDraft) {
+        // Case 1: Fill only (neither save draft nor publish)
+        if (!saveDraft && !autoPublish) {
           result.ok = true;
           stage('已填写');
           result.message = '标题和正文已写入，等待主程序操作。';
           return result;
         }
 
-        stage('保存草稿');
-        const saveBtn = findByTexts(['存草稿', '保存草稿', '存为草稿', '保存'], ['发布', '提交审核', '立即发布']);
-        if (saveBtn) {
-          clickElement(saveBtn);
-          await sleep(2000);
+        // Case 2: Save draft
+        if (saveDraft) {
+          stage('保存草稿');
+          const saveBtn = findByTexts(['存草稿', '保存草稿', '存为草稿', '保存'], ['发布', '提交审核', '立即发布']);
+          if (saveBtn) {
+            clickElement(saveBtn);
+            await sleep(2000);
+          }
+          result.ok = true;
+          stage('完成');
+          result.message = '已尝试保存草稿。';
+          return result;
         }
 
-        result.ok = true;
-        stage('完成');
-        result.message = '已尝试保存草稿。';
+        // Case 3: Auto publish (autoPublish === true)
+        stage('点击立即发布');
+        const publishBtn = findQimaoPublishBtn();
+        if (publishBtn) {
+          clickElement(publishBtn);
+          await sleep(2000);
+
+          stage('确认发布');
+          const confirmBtn = findQimaoConfirmPublishBtn();
+          if (confirmBtn) {
+            clickElement(confirmBtn);
+            await sleep(3000);
+
+            result.ok = true;
+            stage('发布完成');
+            result.message = '已成功发布章节。';
+          } else {
+            result.ok = true;
+            result.message = '已点击立即发布，但未找到确认发布按钮，请手动确认。';
+          }
+        } else {
+          result.message = '未找到立即发布按钮。';
+        }
         return result;
       } catch (error) {
         result.ok = false;
@@ -285,13 +426,21 @@ function buildClickPublishScript() {
       return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
     }
     function normalize(value) { return String(value || '').replace(/\\s+/g, ' ').trim(); }
+    // Prefer Qimao CSS class selector
+    const cssBtn = document.querySelector('a.qm-btn.default, button.qm-btn.default, a.qm-btn, button.qm-btn');
+    if (cssBtn && visible(cssBtn) && /立即发布|发布/.test(normalize(cssBtn.innerText || cssBtn.textContent))) {
+      const target = cssBtn.closest('button,a,[role="button"]') || cssBtn;
+      target.click();
+      return { ok: true, text: normalize(target.innerText || target.textContent), method: 'css' };
+    }
+    // Fallback: text matching
     const btn = Array.from(document.querySelectorAll('button,a,[role="button"],span,div'))
       .filter(visible)
       .find(el => /^(发布|提交|立即发布|发布章节)$/.test(normalize(el.innerText || el.textContent)));
     if (!btn) return { ok: false, message: '未找到发布按钮' };
     const target = btn.closest('button,a,[role="button"]') || btn;
     target.click();
-    return { ok: true, text: normalize(target.innerText || target.textContent) };
+    return { ok: true, text: normalize(target.innerText || target.textContent), method: 'text' };
   }.toString()})();`;
 }
 
@@ -304,13 +453,21 @@ function buildClickConfirmPublishScript() {
       return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
     }
     function normalize(value) { return String(value || '').replace(/\\s+/g, ' ').trim(); }
+    // Prefer Qimao CSS class selector
+    const cssBtn = document.querySelector('a.qm-btn.important, button.qm-btn.important');
+    if (cssBtn && visible(cssBtn)) {
+      const target = cssBtn.closest('button,a,[role="button"]') || cssBtn;
+      target.click();
+      return { ok: true, text: normalize(target.innerText || target.textContent), method: 'css' };
+    }
+    // Fallback: text matching
     const btn = Array.from(document.querySelectorAll('button,a,[role="button"],span,div'))
       .filter(visible)
       .find(el => /^(确认发布|确定发布|确认|确定)$/.test(normalize(el.innerText || el.textContent)));
     if (!btn) return { ok: false, message: '未找到确认发布按钮' };
     const target = btn.closest('button,a,[role="button"]') || btn;
     target.click();
-    return { ok: true, text: normalize(target.innerText || target.textContent) };
+    return { ok: true, text: normalize(target.innerText || target.textContent), method: 'text' };
   }.toString()})();`;
 }
 
@@ -329,6 +486,73 @@ function buildPublishCompletionDetectionScript() {
   }.toString()})();`;
 }
 
+/**
+ * Build script that waits for the Qimao chapter editor to be ready.
+ * Qimao opens the editor as an in-page overlay/modal (no URL change),
+ * so we must poll for editor DOM elements instead of URL-based detection.
+ */
+function buildWaitForEditorReadyScript() {
+  return `(${function waitForQimaoEditor() {
+    return new Promise(function(resolve) {
+      var start = Date.now();
+      var timeout = 30000;
+
+      function visible(el) {
+        if (!el) return false;
+        try {
+          var rect = el.getBoundingClientRect();
+          var style = window.getComputedStyle(el);
+          return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+        } catch (e) { return false; }
+      }
+
+      function findTitleField() {
+        var selectors = [
+          '.chapter-header textarea.el-textarea__inner',
+          '.chapter-name textarea',
+          '.chapter-index-name-wrap textarea',
+          'textarea[placeholder*="章节名称"]'
+        ];
+        for (var i = 0; i < selectors.length; i++) {
+          var found = document.querySelector(selectors[i]);
+          if (found && visible(found)) return found;
+        }
+        return null;
+      }
+
+      function findContentField() {
+        var selectors = [
+          '.chapter-editor .q-contenteditable.edit-mask',
+          '.chapter-editor .q-contenteditable[contenteditable="true"]',
+          '.chapter-con .q-contenteditable.edit-mask',
+          '.q-contenteditable.book.font-size-16.edit-mask'
+        ];
+        for (var i = 0; i < selectors.length; i++) {
+          var found = document.querySelector(selectors[i]);
+          if (found && visible(found)) return found;
+        }
+        return null;
+      }
+
+      function check() {
+        var titleEl = findTitleField();
+        var contentEl = findContentField();
+        if (titleEl && contentEl) {
+          resolve({ ok: true, ready: true, url: location.href });
+        } else if (Date.now() - start > timeout) {
+          var parts = [];
+          if (!titleEl) parts.push('标题输入框');
+          if (!contentEl) parts.push('正文编辑区');
+          resolve({ ok: false, ready: false, url: location.href, message: parts.join('+') + '未就绪' });
+        } else {
+          setTimeout(check, 500);
+        }
+      }
+      check();
+    });
+  }.toString()})();`;
+}
+
 module.exports = {
   defaultUrl: DEFAULT_QIMAO_URL,
   sessionPartition: QIMAO_PARTITION,
@@ -339,5 +563,6 @@ module.exports = {
   buildUploadScript,
   buildClickPublishScript,
   buildClickConfirmPublishScript,
-  buildPublishCompletionDetectionScript
+  buildPublishCompletionDetectionScript,
+  buildWaitForEditorReadyScript
 };
