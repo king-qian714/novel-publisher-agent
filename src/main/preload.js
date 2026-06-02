@@ -1,8 +1,20 @@
 const { contextBridge, ipcRenderer } = require('electron');
+const fanqie = require('../platforms/fanqie');
 const qimao = require('../platforms/qimao');
 
 contextBridge.exposeInMainWorld('novelPublisher', {
-  // 平台脚本构建器
+  // 番茄平台脚本构建器
+  fanqieBuildPageDetectionScript: fanqie.buildPageDetectionScript,
+  fanqieBuildClickNewChapterScript: fanqie.buildClickNewChapterScript,
+  fanqieBuildUploadScript: fanqie.buildUploadScript,
+  fanqieBuildPublishCompletionDetectionScript: fanqie.buildPublishCompletionDetectionScript,
+  fanqieBuildWorkflowSnapshotScript: fanqie.buildWorkflowSnapshotScript,
+  fanqieDefaultUrl: fanqie.defaultUrl,
+  fanqieSessionPartition: fanqie.sessionPartition,
+  fanqieDisplayName: fanqie.displayName,
+  fanqieAppName: fanqie.appName,
+
+  // 七猫平台脚本构建器
   qimaoBuildPageDetectionScript: qimao.buildPageDetectionScript,
   qimaoBuildClickNewChapterScript: qimao.buildClickNewChapterScript,
   qimaoBuildUploadScript: qimao.buildUploadScript,

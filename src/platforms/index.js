@@ -18,12 +18,7 @@ function list() {
   return Object.values(adapters).map((a) => ({ name: a.name, displayName: a.displayName, defaultUrl: a.defaultUrl }));
 }
 
+register('fanqie', require('./fanqie'));
 register('qimao', require('./qimao'));
-
-try {
-  register('fanqie', require('./fanqie'));
-} catch (_) {
-  // fanqie adapter is inlined in renderer.js; no separate fanqie.js needed
-}
 
 module.exports = { register, get, getDefault, list };
