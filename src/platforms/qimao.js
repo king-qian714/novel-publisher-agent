@@ -75,8 +75,10 @@ function buildClickNewChapterScript() {
 }
 
 function buildUploadScript(title, body, options = {}) {
+  // Qimao 上传时标题会自动加上"第X章"前缀，所以要去掉标题中已有的章节号
+  const cleanedTitle = title.replace(/^第[0-9０-９零〇一二两三四五六七八九十百千万]+[章节张回]\s*/, '').trim() || title;
   const payload = {
-    title: title || '',
+    title: cleanedTitle,
     content: body || '',
     shouldClickNew: options.clickNew !== false,
     saveDraft: options.saveDraft !== false,
@@ -241,13 +243,26 @@ function buildUploadScript(title, body, options = {}) {
       }
 
       function findQimaoConfirmPublishBtn() {
-        // Prefer CSS class selector for Qimao confirmation button
+        // 1. Try CSS class selector for primary/styled buttons (最可靠的检测方式)
         const cssBtn = document.querySelector('a.qm-btn.important, button.qm-btn.important');
-        if (cssBtn && visible(cssBtn)) {
-          return cssBtn;
+        if (cssBtn && visible(cssBtn)) return cssBtn;
+
+        // 2. Try to find within a visible popup/dialog (弹窗内的确认按钮)
+        const dialog = document.querySelector('.el-dialog, .el-message-box, .dialog-container, [role="dialog"], .modal-content, .el-message-box__wrapper');
+        if (dialog && visible(dialog)) {
+          const dialogBtns = dialog.querySelectorAll('button,a,[role="button"],span');
+          for (var i = 0; i < dialogBtns.length; i++) {
+            var btn = dialogBtns[i];
+            if (!visible(btn)) continue;
+            var txt = normalizeText(btn.innerText || btn.textContent || '');
+            if (!txt || txt.length > 40) continue;
+            // 弹窗内的确认按钮匹配：立即发布/确认发布/确定发布/确定
+            if (/^(确认发布|确定发布|立即发布|发布|确认|确定)$/.test(txt)) return btn;
+          }
         }
-        // Fallback: text matching
-        return findByTexts(['确认发布', '确定发布', '确认', '确定'], ['立即发布', '取消']);
+
+        // 3. Global fallback - search all visible elements (全局兜底)
+        return findByTexts(['确认发布', '确定发布', '立即发布', '确认', '确定'], ['取消', '存草稿', '保存草稿', '保存']);
       }
 
       try {
@@ -389,11 +404,20 @@ function buildUploadScript(title, body, options = {}) {
         const publishBtn = findQimaoPublishBtn();
         if (publishBtn) {
           clickElement(publishBtn);
-          await sleep(2000);
 
-          stage('确认发布');
-          const confirmBtn = findQimaoConfirmPublishBtn();
+          // 轮询等待弹窗出现（弹窗可能有过渡动画/延迟加载）
+          stage('等待发布确认弹窗');
+          var confirmBtn = null;
+          var pollStart = Date.now();
+          var pollTimeout = 12000; // 最多等 12 秒
+          while (Date.now() - pollStart < pollTimeout) {
+            confirmBtn = findQimaoConfirmPublishBtn();
+            if (confirmBtn) break;
+            await sleep(300);
+          }
+
           if (confirmBtn) {
+            stage('确认发布');
             clickElement(confirmBtn);
             await sleep(3000);
 
@@ -402,7 +426,7 @@ function buildUploadScript(title, body, options = {}) {
             result.message = '已成功发布章节。';
           } else {
             result.ok = true;
-            result.message = '已点击立即发布，但未找到确认发布按钮，请手动确认。';
+            result.message = '已点击立即发布，但等待发布确认弹窗超时，请手动确认。';
           }
         } else {
           result.message = '未找到立即发布按钮。';
