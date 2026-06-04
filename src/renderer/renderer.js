@@ -887,32 +887,68 @@ async function uploadOneChapter(chapter) {
       log(`标题和正文已写入，完成后动作：${label}。`);
       if (finalAction === 'next') {
         if (currentPlatform === 'qimao') {
-          const publishMsg = result.message || '';
-          log(`七猫发布结果：${publishMsg}`);
-          if (/成功|完成/.test(publishMsg) || result.ok) {
+          // 七猫直接发布：上传脚本只填写不点击，此处分步执行发布操作
+          // Step 1: click "立即发布" button on the editor page
+          log('七猫：点击立即发布按钮...');
+          let publishClicked = false;
+          try {
+            const clickResult = await withTimeout(
+              executeInWriterWindow(api.qimaoBuildClickPublishScript()),
+              15000,
+              '点击发布按钮超时'
+            );
+            if (clickResult?.ok) {
+              log(`七猫：已点击发布按钮：${clickResult.text || ''}`);
+              publishClicked = true;
+            } else {
+              log(`七猫：点击发布按钮失败：${clickResult?.message || '未知错误'}`);
+            }
+          } catch (publishError) {
+            log(`七猫：点击发布按钮异常：${publishError.message}`);
+          }
+
+          // Step 2: wait for confirmation popup and click confirm
+          if (publishClicked) {
             await sleepWithStop(2000);
-            // Wait for page to return to chapter manage page (needed for loop upload)
-            log('等待七猫返回章节管理页...');
-            const manageWaitStart = Date.now();
-            const manageTimeout = 30000;
-            let returnedToManage = false;
-            while (Date.now() - manageWaitStart < manageTimeout) {
-              ensureTaskNotStopped();
-              try {
-                const detectResult = await executeInWriterWindowSafe(
-                  api.qimaoBuildPublishCompletionDetectionScript()
-                );
-                if (detectResult?.isManage || detectResult?.hasNewChapter) {
-                  log('七猫已返回章节管理页，准备下一章。');
-                  returnedToManage = true;
-                  break;
-                }
-              } catch (_) {}
-              await sleepWithStop(1000);
+            log('七猫：等待发布确认弹窗并点击立即发布...');
+            try {
+              const confirmResult = await withTimeout(
+                executeInWriterWindow(api.qimaoBuildClickConfirmPublishScript()),
+                15000,
+                '点击确认发布按钮超时'
+              );
+              if (confirmResult?.ok) {
+                log(`七猫：已点击确认发布按钮：${confirmResult.text || ''}`);
+              } else {
+                log(`七猫：点击确认发布失败：${confirmResult?.message || '未知错误'}`);
+              }
+            } catch (confirmError) {
+              log(`七猫：点击确认发布异常：${confirmError.message}`);
             }
-            if (!returnedToManage) {
-              log('七猫页面未检测到章节管理页（可能仍在过渡），继续...');
-            }
+          }
+
+          // Step 3: wait for page to return to chapter manage page
+          await sleepWithStop(2000);
+          log('七猫：等待返回章节管理页...');
+          const manageWaitStart = Date.now();
+          const manageTimeout = 30000;
+          let returnedToManage = false;
+          while (Date.now() - manageWaitStart < manageTimeout) {
+            ensureTaskNotStopped();
+            try {
+              const detectResult = await executeInWriterWindowSafe(
+                api.qimaoBuildPublishCompletionDetectionScript()
+              );
+              if (detectResult?.isManage || detectResult?.hasNewChapter) {
+                log('七猫已返回章节管理页，准备下一章。');
+                returnedToManage = true;
+                break;
+              }
+            } catch (_) {}
+            await sleepWithStop(1000);
+          }
+          if (!returnedToManage) {
+            log('七猫页面未检测到章节管理页（可能仍在过渡），继续...');
           }
         } else {
           const publishResult = await runDirectPublishFlow();
@@ -920,8 +956,43 @@ async function uploadOneChapter(chapter) {
         }
       } else if (currentPlatform === 'fanqie' && finalAction !== 'none') {
         await clickFinalActionWithRetry(finalAction);
-      } else if (currentPlatform === 'qimao') {
-        log('七猫存草稿流程由脚本内部完成。');
+      } else if (currentPlatform === 'qimao' && finalAction === 'draft') {
+        // 七猫存草稿：上传脚本只填写不点击，需在此处点击存草稿
+        log('七猫：点击存草稿按钮...');
+        try {
+          const saveResult = await withTimeout(
+            executeInWriterWindow(`(${function() {
+              function visible(el) {
+                if (!el || typeof el.getBoundingClientRect !== 'function') return false;
+                var rect = el.getBoundingClientRect();
+                var style = getComputedStyle(el);
+                return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+              }
+              function normalize(v) { return String(v || '').replace(/\\s+/g, ' ').trim(); }
+              var btns = document.querySelectorAll('button,a,[role="button"],span');
+              for (var i = 0; i < btns.length; i++) {
+                var el = btns[i];
+                if (!visible(el)) continue;
+                var text = normalize(el.innerText || el.textContent || '');
+                if (!text) continue;
+                if (/存草稿|保存草稿|存为草稿/.test(text)) {
+                  el.click();
+                  return { ok: true, text: text };
+                }
+              }
+              return { ok: false, message: '未找到存草稿按钮' };
+            }.toString()})()`),
+            15000,
+            '点击存草稿超时'
+          );
+          if (saveResult?.ok) {
+            log(`七猫：已点击存草稿按钮：${saveResult.text || ''}`);
+          } else {
+            log(`七猫：点击存草稿失败：${saveResult?.message || '未知错误'}`);
+          }
+        } catch (saveError) {
+          log(`七猫：点击存草稿异常：${saveError.message}`);
+        }
       }
       result.finalAction = finalAction;
       result.step = '完成';

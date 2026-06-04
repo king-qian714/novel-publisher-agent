@@ -80,14 +80,14 @@ function buildUploadScript(title, body, options = {}) {
   const payload = {
     title: cleanedTitle,
     content: body || '',
-    shouldClickNew: options.clickNew !== false,
-    saveDraft: options.saveDraft !== false,
-    autoPublish: options.autoPublish === true
+    shouldClickNew: options.clickNew !== false
   };
 
+  // 注意：本脚本只负责填写标题和正文，不进行任何按钮点击。
+  // 存草稿/发布/确认弹窗等操作由 renderer 在脚本返回后分步执行。
   return `(${function runQimaoUpload(payload) {
     return (async () => {
-      const { title, content, shouldClickNew, saveDraft, autoPublish } = payload;
+      const { title, content, shouldClickNew } = payload;
       const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const result = { ok: false, step: '初始化', message: '', details: {} };
 
@@ -232,39 +232,6 @@ function buildUploadScript(title, body, options = {}) {
         return scored[0] ? scored[0].el : null;
       }
 
-      function findQimaoPublishBtn() {
-        // Prefer CSS class selector for Qimao styled buttons
-        const cssBtn = document.querySelector('a.qm-btn.default, button.qm-btn.default, a.qm-btn, button.qm-btn');
-        if (cssBtn && visible(cssBtn) && /立即发布|发布/.test(normalizeText(cssBtn.innerText || cssBtn.textContent))) {
-          return cssBtn;
-        }
-        // Fallback: text matching
-        return findByTexts(['立即发布', '发布章节', '发布'], ['确认发布', '确定发布', '存草稿', '保存']);
-      }
-
-      function findQimaoConfirmPublishBtn() {
-        // 1. Try CSS class selector for primary/styled buttons (最可靠的检测方式)
-        const cssBtn = document.querySelector('a.qm-btn.important, button.qm-btn.important');
-        if (cssBtn && visible(cssBtn)) return cssBtn;
-
-        // 2. Try to find within a visible popup/dialog (弹窗内的确认按钮)
-        const dialog = document.querySelector('.el-dialog, .el-message-box, .dialog-container, [role="dialog"], .modal-content, .el-message-box__wrapper');
-        if (dialog && visible(dialog)) {
-          const dialogBtns = dialog.querySelectorAll('button,a,[role="button"],span');
-          for (var i = 0; i < dialogBtns.length; i++) {
-            var btn = dialogBtns[i];
-            if (!visible(btn)) continue;
-            var txt = normalizeText(btn.innerText || btn.textContent || '');
-            if (!txt || txt.length > 40) continue;
-            // 弹窗内的确认按钮匹配：立即发布/确认发布/确定发布/确定
-            if (/^(确认发布|确定发布|立即发布|发布|确认|确定)$/.test(txt)) return btn;
-          }
-        }
-
-        // 3. Global fallback - search all visible elements (全局兜底)
-        return findByTexts(['确认发布', '确定发布', '立即发布', '确认', '确定'], ['取消', '存草稿', '保存草稿', '保存']);
-      }
-
       try {
         stage('检测页面');
 
@@ -291,8 +258,6 @@ function buildUploadScript(title, body, options = {}) {
           if (tag === 'textarea' || tag === 'input') {
             setNativeValue(contentField, content);
           } else {
-            // Qimao Vue contenteditable: execCommand generates TRUSTED events (isTrusted=true)
-            // Synthetic dispatchEvent is isTrusted=false - Vue editors often reject untrusted events
             const doc = contentField.ownerDocument || document;
             const win = doc.defaultView || window;
             const beforeLength = normalizeText(contentField.innerText || contentField.textContent || '').length;
@@ -300,7 +265,6 @@ function buildUploadScript(title, body, options = {}) {
             try { contentField.focus(); } catch (_) {}
             await sleep(100);
 
-            // Select all existing content (to replace it)
             try {
               const selection = win.getSelection();
               const range = doc.createRange();
@@ -309,7 +273,6 @@ function buildUploadScript(title, body, options = {}) {
               selection.addRange(range);
             } catch (_) {}
 
-            // Helper: build HTML from content with paragraph splitting
             function buildContentHTML(text) {
               var paragraphs = text
                 .split(/\n{2,}/)
@@ -331,17 +294,12 @@ function buildUploadScript(title, body, options = {}) {
             var contentHTML = buildContentHTML(content);
             var minLen = Math.min(10, normalizeText(content).length);
 
-            // Method 1: execCommand('insertHTML') - generates trusted events (isTrusted=true)
-            // Some editors only accept trusted events. This is deprecated but still works in many cases.
             try {
               if (contentHTML) doc.execCommand('insertHTML', false, contentHTML);
             } catch (_) {}
             await sleep(200);
             hasContent = hasContentLength(contentField) > beforeLength + minLen;
 
-            // Method 2: Direct innerHTML + dispatch events for Vue editors
-            // Vue 2 contenteditable @input/v-model doesn't check event.isTrusted,
-            // so dispatching InputEvent('input') triggers Vue reactivity reliably.
             if (!hasContent) {
               contentField.innerHTML = contentHTML;
               try { contentField.dispatchEvent(new win.InputEvent('beforeinput', { bubbles: true, cancelable: true })); } catch (_) {}
@@ -351,7 +309,6 @@ function buildUploadScript(title, body, options = {}) {
               hasContent = hasContentLength(contentField) > beforeLength + minLen;
             }
 
-            // Method 3: execCommand('insertText') - absolute last resort (plain text only, no formatting)
             if (!hasContent) {
               try {
                 var textSel = win.getSelection();
@@ -365,7 +322,6 @@ function buildUploadScript(title, body, options = {}) {
               hasContent = hasContentLength(contentField) > beforeLength + minLen;
             }
 
-            // Log result for debugging
             const finalContentLength = normalizeText(contentField.innerText || contentField.textContent || '').length;
             result.details.contentLength = finalContentLength;
             result.details.contentInjected = hasContent;
@@ -377,60 +333,10 @@ function buildUploadScript(title, body, options = {}) {
           return result;
         }
 
-        // Case 1: Fill only (neither save draft nor publish)
-        if (!saveDraft && !autoPublish) {
-          result.ok = true;
-          stage('已填写');
-          result.message = '标题和正文已写入，等待主程序操作。';
-          return result;
-        }
-
-        // Case 2: Save draft
-        if (saveDraft) {
-          stage('保存草稿');
-          const saveBtn = findByTexts(['存草稿', '保存草稿', '存为草稿', '保存'], ['发布', '提交审核', '立即发布']);
-          if (saveBtn) {
-            clickElement(saveBtn);
-            await sleep(2000);
-          }
-          result.ok = true;
-          stage('完成');
-          result.message = '已尝试保存草稿。';
-          return result;
-        }
-
-        // Case 3: Auto publish (autoPublish === true)
-        stage('点击立即发布');
-        const publishBtn = findQimaoPublishBtn();
-        if (publishBtn) {
-          clickElement(publishBtn);
-
-          // 轮询等待弹窗出现（弹窗可能有过渡动画/延迟加载）
-          stage('等待发布确认弹窗');
-          var confirmBtn = null;
-          var pollStart = Date.now();
-          var pollTimeout = 12000; // 最多等 12 秒
-          while (Date.now() - pollStart < pollTimeout) {
-            confirmBtn = findQimaoConfirmPublishBtn();
-            if (confirmBtn) break;
-            await sleep(300);
-          }
-
-          if (confirmBtn) {
-            stage('确认发布');
-            clickElement(confirmBtn);
-            await sleep(3000);
-
-            result.ok = true;
-            stage('发布完成');
-            result.message = '已成功发布章节。';
-          } else {
-            result.ok = true;
-            result.message = '已点击立即发布，但等待发布确认弹窗超时，请手动确认。';
-          }
-        } else {
-          result.message = '未找到立即发布按钮。';
-        }
+        // 本脚本只填写，不点击任何按钮。存草稿/发布由 renderer 分步执行。
+        result.ok = true;
+        stage('已填写');
+        result.message = '标题和正文已写入。';
         return result;
       } catch (error) {
         result.ok = false;
@@ -450,19 +356,33 @@ function buildClickPublishScript() {
       return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
     }
     function normalize(value) { return String(value || '').replace(/\\s+/g, ' ').trim(); }
-    // Prefer Qimao CSS class selector
-    const cssBtn = document.querySelector('a.qm-btn.default, button.qm-btn.default, a.qm-btn, button.qm-btn');
-    if (cssBtn && visible(cssBtn) && /立即发布|发布/.test(normalize(cssBtn.innerText || cssBtn.textContent))) {
-      const target = cssBtn.closest('button,a,[role="button"]') || cssBtn;
-      target.click();
-      return { ok: true, text: normalize(target.innerText || target.textContent), method: 'css' };
+    // Find publish button, excluding save-draft buttons
+    // Step 1: CSS class selector
+    var allBtns = document.querySelectorAll('a.qm-btn, button.qm-btn');
+    for (var i = 0; i < allBtns.length; i++) {
+      var btn = allBtns[i];
+      if (!visible(btn)) continue;
+      var text = normalize(btn.innerText || btn.textContent || '');
+      if (!text) continue;
+      // 排除存草稿/保存类按钮
+      if (/存草稿|保存草稿|保存|取消/.test(text)) continue;
+      if (/立即发布|发布|提交/.test(text)) {
+        var target = btn.closest('button,a,[role="button"]') || btn;
+        target.click();
+        return { ok: true, text: normalize(target.innerText || target.textContent), method: 'css' };
+      }
     }
-    // Fallback: text matching
-    const btn = Array.from(document.querySelectorAll('button,a,[role="button"],span,div'))
+    // Step 2: text fallback - exclude save/cancel buttons
+    var allCandidates = Array.from(document.querySelectorAll('button,a,[role="button"],span,div'))
       .filter(visible)
-      .find(el => /^(发布|提交|立即发布|发布章节)$/.test(normalize(el.innerText || el.textContent)));
-    if (!btn) return { ok: false, message: '未找到发布按钮' };
-    const target = btn.closest('button,a,[role="button"]') || btn;
+      .filter(function(el) {
+        var t = normalize(el.innerText || el.textContent || '');
+        if (!t || t.length > 40) return false;
+        if (/存草稿|保存草稿|保存|取消/.test(t)) return false;
+        return /^(发布|提交|立即发布|发布章节)$/.test(t);
+      });
+    if (allCandidates.length === 0) return { ok: false, message: '未找到发布按钮' };
+    var target = allCandidates[0].closest('button,a,[role="button"]') || allCandidates[0];
     target.click();
     return { ok: true, text: normalize(target.innerText || target.textContent), method: 'text' };
   }.toString()})();`;
@@ -477,19 +397,51 @@ function buildClickConfirmPublishScript() {
       return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
     }
     function normalize(value) { return String(value || '').replace(/\\s+/g, ' ').trim(); }
-    // Prefer Qimao CSS class selector
-    const cssBtn = document.querySelector('a.qm-btn.important, button.qm-btn.important');
+    function findByTexts(texts, excludes) {
+      var all = Array.from(document.querySelectorAll('button,a,[role="button"],span,div'));
+      var exact = [], fuzzy = [];
+      for (var i = 0; i < all.length; i++) {
+        var el = all[i];
+        if (!visible(el)) continue;
+        var t = normalize(el.innerText || el.textContent || '');
+        if (!t || t.length > 40) continue;
+        if (excludes.some(function(ex) { return t.includes(ex); })) continue;
+        if (texts.some(function(tx) { return t === tx; })) exact.push(el);
+        else if (texts.some(function(tx) { return t.includes(tx); })) fuzzy.push(el);
+      }
+      return exact[0] || fuzzy[0] || null;
+    }
+    // Step 1: CSS class selector for primary buttons
+    var cssBtn = document.querySelector('a.qm-btn.important, button.qm-btn.important');
     if (cssBtn && visible(cssBtn)) {
-      const target = cssBtn.closest('button,a,[role="button"]') || cssBtn;
+      var target = cssBtn.closest('button,a,[role="button"]') || cssBtn;
       target.click();
       return { ok: true, text: normalize(target.innerText || target.textContent), method: 'css' };
     }
-    // Fallback: text matching
-    const btn = Array.from(document.querySelectorAll('button,a,[role="button"],span,div'))
-      .filter(visible)
-      .find(el => /^(确认发布|确定发布|确认|确定)$/.test(normalize(el.innerText || el.textContent)));
+    // Step 2: search within visible popup/dialog (弹窗内找确认按钮)
+    var dialog = document.querySelector('.el-dialog, .el-message-box, .dialog-container, [role="dialog"], .modal-content, .el-message-box__wrapper, .dialog');
+    if (dialog && visible(dialog)) {
+      var dialogBtns = dialog.querySelectorAll('button,a,[role="button"],span');
+      for (var i = 0; i < dialogBtns.length; i++) {
+        var btn = dialogBtns[i];
+        if (!visible(btn)) continue;
+        var txt = normalize(btn.innerText || btn.textContent || '');
+        if (!txt || txt.length > 40) continue;
+        if (/存草稿|保存草稿|取消/.test(txt)) continue;
+        if (/^(确认发布|确定发布|立即发布|发布|确认|确定)$/.test(txt)) {
+          var target = btn.closest('button,a,[role="button"]') || btn;
+          target.click();
+          return { ok: true, text: normalize(target.innerText || target.textContent), method: 'dialog' };
+        }
+      }
+    }
+    // Step 3: global text fallback
+    var btn = findByTexts(
+      ['确认发布', '确定发布', '立即发布', '确认', '确定'],
+      ['取消', '存草稿', '保存草稿', '保存']
+    );
     if (!btn) return { ok: false, message: '未找到确认发布按钮' };
-    const target = btn.closest('button,a,[role="button"]') || btn;
+    var target = btn.closest('button,a,[role="button"]') || btn;
     target.click();
     return { ok: true, text: normalize(target.innerText || target.textContent), method: 'text' };
   }.toString()})();`;
