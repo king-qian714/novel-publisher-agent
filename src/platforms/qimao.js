@@ -351,40 +351,74 @@ function buildClickPublishScript() {
   return `(${function clickPublish() {
     function visible(el) {
       if (!el || typeof el.getBoundingClientRect !== 'function') return false;
-      const rect = el.getBoundingClientRect();
-      const style = getComputedStyle(el);
-      return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+      try {
+        var rect = el.getBoundingClientRect();
+        var style = window.getComputedStyle(el);
+        return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+      } catch (e) { return false; }
     }
     function normalize(value) { return String(value || '').replace(/\\s+/g, ' ').trim(); }
-    // Find publish button, excluding save-draft buttons
-    // Step 1: CSS class selector
-    var allBtns = document.querySelectorAll('a.qm-btn, button.qm-btn');
-    for (var i = 0; i < allBtns.length; i++) {
-      var btn = allBtns[i];
-      if (!visible(btn)) continue;
-      var text = normalize(btn.innerText || btn.textContent || '');
-      if (!text) continue;
-      // 排除存草稿/保存类按钮
-      if (/存草稿|保存草稿|保存|取消/.test(text)) continue;
-      if (/立即发布|发布|提交/.test(text)) {
-        var target = btn.closest('button,a,[role="button"]') || btn;
-        target.click();
-        return { ok: true, text: normalize(target.innerText || target.textContent), method: 'css' };
-      }
-    }
-    // Step 2: text fallback - exclude save/cancel buttons
-    var allCandidates = Array.from(document.querySelectorAll('button,a,[role="button"],span,div'))
-      .filter(visible)
-      .filter(function(el) {
+    function findByTexts(texts, excludes) {
+      var all = document.querySelectorAll('button,a,[role="button"],span,div');
+      var exact = [], fuzzy = [];
+      for (var i = 0; i < all.length; i++) {
+        var el = all[i];
+        if (!visible(el)) continue;
         var t = normalize(el.innerText || el.textContent || '');
-        if (!t || t.length > 40) return false;
-        if (/存草稿|保存草稿|保存|取消/.test(t)) return false;
-        return /^(发布|提交|立即发布|发布章节)$/.test(t);
-      });
-    if (allCandidates.length === 0) return { ok: false, message: '未找到发布按钮' };
-    var target = allCandidates[0].closest('button,a,[role="button"]') || allCandidates[0];
-    target.click();
-    return { ok: true, text: normalize(target.innerText || target.textContent), method: 'text' };
+        if (!t || t.length > 40) continue;
+        if (excludes && excludes.some(function(ex) { return t.includes(ex); })) continue;
+        if (texts.some(function(tx) { return t === tx; })) exact.push(el);
+        else if (texts.some(function(tx) { return t.indexOf(tx) >= 0; })) fuzzy.push(el);
+      }
+      return exact[0] || fuzzy[0] || null;
+    }
+    function tryClick(btn) {
+      if (!btn) return null;
+      var target = btn.tagName === 'A' || btn.tagName === 'BUTTON' ? btn : (btn.closest('button,a,[role="button"]') || btn);
+      target.click();
+      return { ok: true, text: normalize(target.innerText || target.textContent || ''), method: target.tagName };
+    }
+    // Poll for up to 8 seconds (button may appear after async render)
+    var pollStart = Date.now();
+    while (Date.now() - pollStart < 8000) {
+      // Step 1: CSS class selector — also match qm-btn.important (actual publish button class)
+      var cssBtns = document.querySelectorAll('a.qm-btn, button.qm-btn, a.qm-btn\\.important, button.qm-btn\\.important');
+      for (var i = 0; i < cssBtns.length; i++) {
+        var btn = cssBtns[i];
+        if (!visible(btn)) continue;
+        var text = normalize(btn.innerText || btn.textContent || '');
+        if (!text) continue;
+        // 排除存草稿/保存类按钮
+        if (/存草稿|保存草稿|保存|取消/.test(text)) continue;
+        if (/立即发布|发布|提交/.test(text)) {
+          var result = tryClick(btn);
+          if (result) return result;
+        }
+      }
+      // Step 2: findByTexts fallback (same strategy as old working code)
+      var btn2 = findByTexts(['立即发布', '发布章节', '发布'], ['确认发布', '确定发布', '存草稿', '保存']);
+      if (btn2) {
+        var result = tryClick(btn2);
+        if (result) return result;
+      }
+      // Step 3: broad text fallback
+      var allCandidates = Array.from(document.querySelectorAll('button,a,[role="button"],span,div'))
+        .filter(visible)
+        .filter(function(el) {
+          var t = normalize(el.innerText || el.textContent || '');
+          if (!t || t.length > 40) return false;
+          if (/存草稿|保存草稿|保存|取消/.test(t)) return false;
+          return /^(发布|提交|立即发布|发布章节)$/.test(t);
+        });
+      if (allCandidates.length > 0) {
+        var result = tryClick(allCandidates[0]);
+        if (result) return result;
+      }
+      // Not found yet → wait 300ms and retry
+      var waitUntil = Date.now() + 300;
+      while (Date.now() < waitUntil) {}
+    }
+    return { ok: false, message: '未找到发布按钮' };
   }.toString()})();`;
 }
 
@@ -392,58 +426,87 @@ function buildClickConfirmPublishScript() {
   return `(${function clickConfirm() {
     function visible(el) {
       if (!el || typeof el.getBoundingClientRect !== 'function') return false;
-      const rect = el.getBoundingClientRect();
-      const style = getComputedStyle(el);
-      return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+      try {
+        var rect = el.getBoundingClientRect();
+        var style = window.getComputedStyle(el);
+        return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+      } catch (e) { return false; }
     }
     function normalize(value) { return String(value || '').replace(/\\s+/g, ' ').trim(); }
     function findByTexts(texts, excludes) {
-      var all = Array.from(document.querySelectorAll('button,a,[role="button"],span,div'));
+      var all = document.querySelectorAll('button,a,[role="button"],span,div');
       var exact = [], fuzzy = [];
       for (var i = 0; i < all.length; i++) {
         var el = all[i];
         if (!visible(el)) continue;
         var t = normalize(el.innerText || el.textContent || '');
         if (!t || t.length > 40) continue;
-        if (excludes.some(function(ex) { return t.includes(ex); })) continue;
+        if (excludes && excludes.some(function(ex) { return t.indexOf(ex) >= 0; })) continue;
         if (texts.some(function(tx) { return t === tx; })) exact.push(el);
-        else if (texts.some(function(tx) { return t.includes(tx); })) fuzzy.push(el);
+        else if (texts.some(function(tx) { return t.indexOf(tx) >= 0; })) fuzzy.push(el);
       }
       return exact[0] || fuzzy[0] || null;
     }
-    // Step 1: CSS class selector for primary buttons
-    var cssBtn = document.querySelector('a.qm-btn.important, button.qm-btn.important');
-    if (cssBtn && visible(cssBtn)) {
-      var target = cssBtn.closest('button,a,[role="button"]') || cssBtn;
+    function tryClick(btn) {
+      if (!btn) return null;
+      var target = btn.tagName === 'A' || btn.tagName === 'BUTTON' ? btn : (btn.closest('button,a,[role="button"]') || btn);
       target.click();
-      return { ok: true, text: normalize(target.innerText || target.textContent), method: 'css' };
+      return { ok: true, text: normalize(target.innerText || target.textContent || ''), method: target.tagName };
     }
-    // Step 2: search within visible popup/dialog (弹窗内找确认按钮)
-    var dialog = document.querySelector('.el-dialog, .el-message-box, .dialog-container, [role="dialog"], .modal-content, .el-message-box__wrapper, .dialog');
-    if (dialog && visible(dialog)) {
-      var dialogBtns = dialog.querySelectorAll('button,a,[role="button"],span');
-      for (var i = 0; i < dialogBtns.length; i++) {
-        var btn = dialogBtns[i];
+    // Poll for up to 8 seconds (popup may have transition animation)
+    var pollStart = Date.now();
+    while (Date.now() - pollStart < 8000) {
+      // Step 1: CSS class selector — but ONLY match confirm-related text,
+      // NOT the editor page's "立即发布" button (which also has class qm-btn.important)
+      var cssBtns = document.querySelectorAll('a.qm-btn.important, button.qm-btn.important, a.qm-btn, button.qm-btn');
+      for (var i = 0; i < cssBtns.length; i++) {
+        var btn = cssBtns[i];
         if (!visible(btn)) continue;
-        var txt = normalize(btn.innerText || btn.textContent || '');
-        if (!txt || txt.length > 40) continue;
-        if (/存草稿|保存草稿|取消/.test(txt)) continue;
-        if (/^(确认发布|确定发布|立即发布|发布|确认|确定)$/.test(txt)) {
-          var target = btn.closest('button,a,[role="button"]') || btn;
-          target.click();
-          return { ok: true, text: normalize(target.innerText || target.textContent), method: 'dialog' };
+        var text = normalize(btn.innerText || btn.textContent || '');
+        if (!text) continue;
+        // 排除存草稿和编辑器的"立即发布"按钮
+        if (/存草稿|保存草稿|立即发布|取消/.test(text)) continue;
+        // 只匹配确认发布/确定发布/确认/确定等确认类文字
+        if (/^(确认发布|确定发布|确认|确定)$/.test(text)) {
+          var result = tryClick(btn);
+          if (result) return result;
         }
       }
+      // Step 2: search within visible popup/dialog (弹窗内找确认按钮)
+      var dialog = document.querySelector('.el-dialog, .el-message-box, .dialog-container, [role="dialog"], .modal-content, .el-message-box__wrapper, .dialog');
+      if (dialog) {
+        try {
+          var dialogRect = dialog.getBoundingClientRect();
+          if (dialogRect.width > 0 && dialogRect.height > 0) {
+            var dialogBtns = dialog.querySelectorAll('button,a,[role="button"],span');
+            for (var j = 0; j < dialogBtns.length; j++) {
+              var dBtn = dialogBtns[j];
+              if (!visible(dBtn)) continue;
+              var txt = normalize(dBtn.innerText || dBtn.textContent || '');
+              if (!txt || txt.length > 40) continue;
+              if (/存草稿|保存草稿|立即发布|取消/.test(txt)) continue;
+              if (/^(确认发布|确定发布|确认|确定)$/.test(txt)) {
+                var result = tryClick(dBtn);
+                if (result) return result;
+              }
+            }
+          }
+        } catch (e) {}
+      }
+      // Step 3: global text fallback
+      var btn3 = findByTexts(
+        ['确认发布', '确定发布', '确认', '确定'],
+        ['取消', '存草稿', '保存草稿', '保存', '立即发布']
+      );
+      if (btn3) {
+        var result = tryClick(btn3);
+        if (result) return result;
+      }
+      // Not found yet → wait 300ms and retry
+      var waitUntil = Date.now() + 300;
+      while (Date.now() < waitUntil) {}
     }
-    // Step 3: global text fallback
-    var btn = findByTexts(
-      ['确认发布', '确定发布', '立即发布', '确认', '确定'],
-      ['取消', '存草稿', '保存草稿', '保存']
-    );
-    if (!btn) return { ok: false, message: '未找到确认发布按钮' };
-    var target = btn.closest('button,a,[role="button"]') || btn;
-    target.click();
-    return { ok: true, text: normalize(target.innerText || target.textContent), method: 'text' };
+    return { ok: false, message: '未找到确认发布按钮' };
   }.toString()})();`;
 }
 
