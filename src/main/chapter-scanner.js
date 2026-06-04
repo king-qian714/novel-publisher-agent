@@ -79,7 +79,8 @@ function normalizeMarkdownBody(body) {
     }
 
     const previous = output.length ? output[output.length - 1] : '';
-    if (pendingBlank && previous && (isMarkdownSceneBreak(previous) || isMarkdownSceneBreak(line))) {
+    if (pendingBlank && previous) {
+      // Preserve ALL paragraph breaks (blank lines), not just scene breaks
       output.push('');
     }
     output.push(line);
