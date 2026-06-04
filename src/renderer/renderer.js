@@ -1401,6 +1401,8 @@ els.platformSelector.addEventListener('change', async () => {
     return;
   }
   currentPlatform = newPlatform;
+  // 切换平台时同步更新"完成后动作"默认值：Qimao 默认完整发布，Fanqie 默认存草稿
+  els.publishAction.value = newPlatform === 'qimao' ? 'next' : 'draft';
   await persistSettings();
   updatePlatformUI();
   setupPlatformEventListeners(currentPlatform);
