@@ -7,3 +7,9 @@ data/*.json
 .DS_Store
 Thumbs.db
 .idea/
+/src/AGENTS.md
+/AGENTS.md
+/QWEN.md
+/.qwen/settings.json
+/.qwen/settings.json.orig
+/.qwen/skills/split-platform-adapters/SKILL.md
