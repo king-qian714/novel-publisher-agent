@@ -717,7 +717,7 @@ async function waitForDirectPublishCompletion(timeout = 70000) {
 }
 
 async function runDirectPublishFlow() {
-  log('开始执行完整发布流程：下一步 → 可选错别字提交 → 可选风险取消 → 使用AI → 确认发布。');
+  log('开始执行完整发布流程：下一步 → 可选错别字提交 → 可选风险取消 → 使用AI → 选择立即发送 → 确认发布。');
   let lastMessage = '';
   const maxAttempts = 3;
 
@@ -741,6 +741,7 @@ async function runDirectPublishFlow() {
       continue;
     }
 
+    await clickWorkflowActionWithRetry('send_immediately', '发送方式选择"立即发送"', 8000, { optional: true, waitAfterMs: 600, minWaitBeforeSkipMs: 2000, stableMs: 400 });
     await clickWorkflowActionWithRetry('confirm_publish', '确认发布', 16000, { waitAfterMs: 1600, stableMs: 650 });
 
     try {

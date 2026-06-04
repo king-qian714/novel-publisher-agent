@@ -45,6 +45,56 @@ module.exports = {
     ipcMain.handle('fanqie:click-save-draft', async (_event, action = 'draft') => {
       const targetWindow = windows.getWriterWindowOrThrow();
       const clickAction = action === 'next' ? 'next' : 'draft';
+
+      // Step 0: 如果是"下一步"，先关闭可能已开启的"定时发布"开关
+      if (clickAction === 'next') {
+        const toggled = await targetWindow.webContents.executeJavaScript(`
+          (() => {
+            function normalize(value) { return String(value || '').replace(/\\s+/g, ' ').trim(); }
+            function visible(el) {
+              if (!el || typeof el.getBoundingClientRect !== 'function') return false;
+              const rect = el.getBoundingClientRect();
+              const style = getComputedStyle(el);
+              return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0' && rect.bottom >= 0 && rect.right >= 0 && rect.top <= window.innerHeight && rect.left <= window.innerWidth;
+            }
+            function classNameOf(el) {
+              const value = el && el.className;
+              if (!value) return '';
+              if (typeof value === 'string') return value;
+              if (value.baseVal) return value.baseVal;
+              return String(value);
+            }
+            // 查找已激活的"定时发布"开关/复选框
+            const scheduleEls = Array.from(document.querySelectorAll('button,a,label,span,div,[role="switch"],[role="checkbox"]'))
+              .filter(visible)
+              .filter(function(el) {
+                var txt = normalize(el.innerText || el.textContent || '');
+                return /定时发布/.test(txt);
+              })
+              .filter(function(el) {
+                // 仅处理已选中/已开启状态的元素
+                var isActive = el.getAttribute('aria-checked') === 'true'
+                  || /arco-switch-checked|checked|active|on/.test(classNameOf(el))
+                  || (el.getAttribute('aria-pressed') === 'true');
+                // 也检查内部 input:checked
+                if (!isActive) {
+                  var input = el.querySelector('input[type="checkbox"],input[type="radio"]');
+                  isActive = input && input.checked;
+                }
+                return isActive;
+              });
+            if (scheduleEls.length === 0) return false;
+            var toggle = scheduleEls[0].closest('button,a,label,[role="switch"],[role="checkbox"]') || scheduleEls[0];
+            toggle.click();
+            return true;
+          })();
+        `, true);
+        if (toggled) {
+          // 等待 UI 更新（开关动画 + 状态刷新）
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+      }
+
       const rect = await targetWindow.webContents.executeJavaScript(`
         (() => {
           const action = ${JSON.stringify(clickAction)};
@@ -82,6 +132,8 @@ module.exports = {
                 if (looseDraftRegex.test(text) || looseDraftRegex.test(buttonText)) score += 170;
                 if (looseNextRegex.test(text) || looseNextRegex.test(buttonText)) score -= 260;
               }
+              // 严格排除定时发布/定时发送——任何时候都不应点击这些按钮
+              if (/定时发布|定时发送/.test(text) || /定时发布|定时发送/.test(buttonText)) score -= 420;
               if (rect.top < 120) score += 80;
               if (rect.left > window.innerWidth * 0.70) score += 60;
               if (rect.width >= 60 && rect.width <= 150 && rect.height >= 28 && rect.height <= 60) score += 45;
@@ -201,6 +253,15 @@ module.exports = {
           loose: ['确认发布|确定发布|立即发布|提交发布'],
           negative: ['取消|存草稿|保存草稿|上一步|下一步|直接发布|关闭|返回'],
           contextBoost: ['发布设置|确认发布|确定发布|使用\\s*AI|发布方式|立即发布']
+        },
+        send_immediately: {
+          label: '发送方式选择立即发送',
+          actionKey: 'send_immediately',
+          exact: ['^立即发送$|^立即发布$'],
+          loose: ['立即发送|立即发布'],
+          negative: ['定时发送|定时发布|取消|存草稿|保存草稿|上一步|下一步|关闭'],
+          requiredContext: ['发布设置|发送方式'],
+          contextBoost: ['发布设置|发送方式|立即发送|立即发布']
         },
         back_manage: {
           label: '返回章节管理',
@@ -404,6 +465,35 @@ module.exports = {
               disabled: best.disabled
             }]);
           }
+          function findSendImmediatelyOption() {
+            const publishModal = findModalByText(/发布设置/, null);
+            if (!publishModal) return null;
+            const modalLines = Array.from(publishModal.querySelectorAll('.card-content-line'))
+              .filter(visible);
+            const sendLine = modalLines.find((line) => /发送方式/.test(humanOnly(line)));
+            const radioScope = sendLine || publishModal;
+            // 找 arco-radio 中文本匹配"立即"的标签
+            const labels = Array.from(radioScope.querySelectorAll('label.arco-radio'))
+              .filter(visible)
+              .map((label) => ({
+                label,
+                input: label.querySelector('input[type="radio"]'),
+                mask: label.querySelector('div.arco-radio-mask') || label.querySelector('.arco-radio-mask'),
+                text: buttonTextOf(label)
+              }))
+              .filter((item) => /^立即发送$|^立即发布$/.test(item.text));
+            if (labels[0]) {
+              const target = labels[0].mask || labels[0].label;
+              return rectCenterPayload(target.getBoundingClientRect(), '发送方式：立即发送', 'send_immediate_arco_radio', [{
+                text: labels[0].text,
+                x: Math.round(target.getBoundingClientRect().left + target.getBoundingClientRect().width / 2),
+                y: Math.round(target.getBoundingClientRect().top + target.getBoundingClientRect().height / 2),
+                score: 999,
+                disabled: false
+              }]);
+            }
+            return null;
+          }
           const bodyText = normalize(document.body ? document.body.innerText : '');
           if (config.requiredContext && !testAny(config.requiredContext, bodyText)) {
             return { ok: false, message: '未检测到' + config.label + '所需弹窗上下文', candidates: [], url: location.href };
@@ -433,6 +523,11 @@ module.exports = {
             if (directConfirmPublish) return directConfirmPublish;
             return { ok: false, message: '未找到"发布设置"弹窗中的"确认发布"按钮，已禁止点击其他按钮', candidates: [], url: location.href };
           }
+          if (config.actionKey === 'send_immediately') {
+            const directSendImmediately = findSendImmediatelyOption();
+            if (directSendImmediately) return directSendImmediately;
+            return { ok: false, message: '未找到"发布设置"弹窗中的"立即发送"选项', candidates: [], url: location.href };
+          }
           const selectors = 'button,a,label,[role="button"],[role="radio"],input[type="radio"],input[type="checkbox"],span,div';
           const candidates = Array.from(document.querySelectorAll(selectors))
             .filter(visible)
@@ -460,7 +555,7 @@ module.exports = {
                 if (/是否使用\\s*AI|发布设置/.test(nearText) && yesLike) score += 320;
                 if (/是否使用\\s*AI/.test(nearText)) score += 70;
                 if (/是否使用\\s*AI.*是.*否/.test(nearText) && !yesLike) score -= 260;
-                if (/定时发布|关闭定时/.test(nearText)) score -= 220;
+                if (/定时发布|定时发送|关闭定时/.test(nearText)) score -= 220;
                 if (noLike) score -= 720;
               }
               if (target.tagName && target.tagName.toLowerCase() === 'button') score += 45;

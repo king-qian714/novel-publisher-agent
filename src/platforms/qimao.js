@@ -381,8 +381,10 @@ function buildClickPublishScript() {
     // Poll for up to 8 seconds (button may appear after async render)
     var pollStart = Date.now();
     while (Date.now() - pollStart < 8000) {
-      // Step 1: CSS class selector — also match qm-btn.important (actual publish button class)
-      var cssBtns = document.querySelectorAll('a.qm-btn, button.qm-btn, a.qm-btn\\.important, button.qm-btn\\.important');
+      // Step 1: CSS class selector — 优先精确匹配"立即发布"，再兜底"发布"/"提交"
+      var cssBtns = document.querySelectorAll('a.qm-btn, button.qm-btn');
+      var exactPublish = null;
+      var loosePublish = null;
       for (var i = 0; i < cssBtns.length; i++) {
         var btn = cssBtns[i];
         if (!visible(btn)) continue;
@@ -390,13 +392,22 @@ function buildClickPublishScript() {
         if (!text) continue;
         // 排除存草稿/保存类按钮
         if (/存草稿|保存草稿|保存|取消/.test(text)) continue;
-        if (/立即发布|发布|提交/.test(text)) {
-          var result = tryClick(btn);
-          if (result) return result;
+        if (text === '立即发布' || /^立即发布$/.test(text)) {
+          exactPublish = btn;
+          break; // 完美匹配，立即点击
+        }
+        if (!loosePublish && (/发布|提交/.test(text))) {
+          loosePublish = btn; // 记录第一个宽松匹配作为兜底
         }
       }
-      // Step 2: findByTexts fallback (same strategy as old working code)
-      var btn2 = findByTexts(['立即发布', '发布章节', '发布'], ['确认发布', '确定发布', '存草稿', '保存']);
+      var targetBtn = exactPublish || loosePublish;
+      if (targetBtn) {
+        var result = tryClick(targetBtn);
+        if (result) return result;
+      }
+      // Step 2: findByTexts fallback — 同样优先精确"立即发布"
+      var btn2 = findByTexts(['立即发布'], ['确认发布', '确定发布', '存草稿', '保存', '发布章节']);
+      if (!btn2) { btn2 = findByTexts(['发布章节', '发布'], ['确认发布', '确定发布', '存草稿', '保存']); }
       if (btn2) {
         var result = tryClick(btn2);
         if (result) return result;
@@ -408,8 +419,17 @@ function buildClickPublishScript() {
           var t = normalize(el.innerText || el.textContent || '');
           if (!t || t.length > 40) return false;
           if (/存草稿|保存草稿|保存|取消/.test(t)) return false;
-          return /^(发布|提交|立即发布|发布章节)$/.test(t);
+          return /^(立即发布|发布|提交|发布章节)$/.test(t);
         });
+      // 再次优先选"立即发布"
+      var immediateBtn = null;
+      for (var i = 0; i < allCandidates.length; i++) {
+        if (normalize(allCandidates[i].innerText || allCandidates[i].textContent || '') === '立即发布') {
+          immediateBtn = allCandidates[i];
+          break;
+        }
+      }
+      if (immediateBtn) { var result = tryClick(immediateBtn); if (result) return result; }
       if (allCandidates.length > 0) {
         var result = tryClick(allCandidates[0]);
         if (result) return result;
