@@ -1,10 +1,5 @@
 const { BrowserWindow, screen } = require('electron');
-
-const FANQIE_PARTITION = 'persist:fanqie-writer';
-const QIMAO_PARTITION = 'persist:qimao-writer';
-// 直接进入番茄作家助手 PC 工作台/作品管理，而不是番茄小说阅读站首页。
-const DEFAULT_FANQIE_URL = 'https://fanqienovel.com/main/writer/book-manage';
-const DEFAULT_QIMAO_URL = 'https://zuozhe.qimao.com/front/index';
+const platforms = require('../platforms');
 
 let writerWindow = null;
 let writerPlatform = '';
@@ -52,15 +47,15 @@ function emitWriterWindowState(eventName) {
 }
 
 function platformPartition(platform) {
-  return platform === 'qimao' ? QIMAO_PARTITION : FANQIE_PARTITION;
+  return platforms.get(platform).sessionPartition;
 }
 
 function platformDefaultUrl(platform) {
-  return platform === 'qimao' ? DEFAULT_QIMAO_URL : DEFAULT_FANQIE_URL;
+  return platforms.get(platform).defaultUrl;
 }
 
 function platformWindowTitle(platform) {
-  return platform === 'qimao' ? '七猫作家助手工作台' : '番茄作家助手工作台';
+  return (platforms.get(platform).displayName || '作家助手') + '作家助手工作台';
 }
 
 function openWriterWindow(platform = 'fanqie', targetUrl = null) {
@@ -185,7 +180,8 @@ function openWriterWindow(platform = 'fanqie', targetUrl = null) {
 
 function getWriterWindowOrThrow() {
   if (!writerWindow || writerWindow.isDestroyed()) {
-    throw new Error('番茄作家助手窗口尚未打开，请先点击\u201c打开作家助手工作台\u201d。');
+    const displayName = platformWindowTitle(writerPlatform || 'fanqie').replace('工作台', '');
+    throw new Error(`${displayName}窗口尚未打开，请先点击\u201c打开作家助手工作台\u201d。`);
   }
   return writerWindow;
 }
@@ -230,9 +226,5 @@ module.exports = {
   platformWindowTitle,
   openWriterWindow,
   getWriterWindowOrThrow,
-  controlWriterWindow,
-  DEFAULT_FANQIE_URL,
-  DEFAULT_QIMAO_URL,
-  FANQIE_PARTITION,
-  QIMAO_PARTITION
+  controlWriterWindow
 };

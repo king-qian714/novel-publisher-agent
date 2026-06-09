@@ -348,7 +348,7 @@ function buildUploadScript(title, body, options = {}) {
 }
 
 function buildClickPublishScript() {
-  return `(${function clickPublish() {
+  return `(${async function clickPublish() {
     function visible(el) {
       if (!el || typeof el.getBoundingClientRect !== 'function') return false;
       try {
@@ -435,15 +435,14 @@ function buildClickPublishScript() {
         if (result) return result;
       }
       // Not found yet → wait 300ms and retry
-      var waitUntil = Date.now() + 300;
-      while (Date.now() < waitUntil) {}
+      await new Promise(function(r) { setTimeout(r, 300); });
     }
     return { ok: false, message: '未找到发布按钮' };
   }.toString()})();`;
 }
 
 function buildClickConfirmPublishScript() {
-  return `(${function clickConfirm() {
+  return `(${async function clickConfirm() {
     function visible(el) {
       if (!el || typeof el.getBoundingClientRect !== 'function') return false;
       try {
@@ -523,8 +522,7 @@ function buildClickConfirmPublishScript() {
         if (result) return result;
       }
       // Not found yet → wait 300ms and retry
-      var waitUntil = Date.now() + 300;
-      while (Date.now() < waitUntil) {}
+      await new Promise(function(r) { setTimeout(r, 300); });
     }
     return { ok: false, message: '未找到确认发布按钮' };
   }.toString()})();`;
@@ -613,6 +611,7 @@ function buildWaitForEditorReadyScript() {
 }
 
 module.exports = {
+  name: 'qimao',
   defaultUrl: DEFAULT_QIMAO_URL,
   sessionPartition: QIMAO_PARTITION,
   displayName: QIMAO_DISPLAY_NAME,

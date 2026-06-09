@@ -40,29 +40,62 @@
 
       <main class="main-layout">
         <section class="workflow-grid">
-          <div class="card controls-card step-card primary-step">
-            <div class="section-title">1. 登录并进入章节管理</div>
-            <p class="hint">
-              只打开作家助手 PC 工作台窗口。登录 Cookie 会保存在本机有效期内，未过期时无需重复扫码。请在弹窗中登录后手动进入目标作品的章节管理/目录页，上传时不要关闭该窗口。
-            </p>
-            <div class="row gap wrap">
-              <button id="minimizeWriterWindowBtn" class="secondary">最小化作家窗口</button>
-              <button id="toggleMaxWriterWindowBtn" class="secondary">最大化/还原</button>
-              <button id="reloadWriterWindowBtn" class="secondary">刷新作家窗口</button>
-              <button id="loginReadyBtn" class="secondary">我已登录</button>
-              <button id="chapterPageReadyBtn" class="secondary">我已进入章节页</button>
-              <button id="testPageBtn" class="secondary">检测当前页面</button>
+          <nav class="nav-steps">
+            <div class="nav-step-item active" data-nav-step="1">
+              <span class="nav-step-icon">📋</span>
+              <div class="nav-step-text">
+                <div class="nav-step-title">登录与确认</div>
+                <div class="nav-step-desc">进入章节管理页</div>
+              </div>
+              <span class="nav-step-status" id="navStep1Status"></span>
+            </div>
+            <div class="nav-step-item" data-nav-step="2">
+              <span class="nav-step-icon">📂</span>
+              <div class="nav-step-text">
+                <div class="nav-step-title">选择章节</div>
+                <div class="nav-step-desc">扫描本地文件夹</div>
+              </div>
+              <span class="nav-step-status" id="navStep2Status"></span>
+            </div>
+            <div class="nav-step-item" data-nav-step="3">
+              <span class="nav-step-icon">📤</span>
+              <div class="nav-step-text">
+                <div class="nav-step-title">上传发布</div>
+                <div class="nav-step-desc">批量上传并确认发布</div>
+              </div>
+              <span class="nav-step-status" id="navStep3Status"></span>
+            </div>
+          </nav>
+          <div class="step-content-area">
+          <div class="card controls-card step-card primary-step" data-step="1" id="stepContent1">
+            <div class="section-title"><span class="step-num" data-step-num="1">1</span>登录并进入章节管理</div>
+            <p class="hint">打开作家助手工作台，登录后进入目标作品的章节管理页，上传时不要关闭该窗口。</p>
+            <div class="btn-group">
+              <div class="btn-group-label">窗口控制</div>
+              <div class="row gap wrap">
+                <button id="minimizeWriterWindowBtn" class="secondary">最小化</button>
+                <button id="toggleMaxWriterWindowBtn" class="secondary">最大化/还原</button>
+                <button id="reloadWriterWindowBtn" class="secondary">刷新</button>
+              </div>
+            </div>
+            <div class="btn-group">
+              <div class="btn-group-label">状态确认</div>
+              <div class="row gap wrap">
+                <button id="loginReadyBtn" class="secondary">我已登录</button>
+                <button id="chapterPageReadyBtn" class="secondary">我已进入章节页</button>
+                <button id="testPageBtn" class="secondary">检测当前页面</button>
+              </div>
             </div>
             <div class="status-strip">
-              <span id="writerWindowState">作家窗口：未打开</span>
-              <span id="loginState">登录：未确认</span>
-              <span id="pageState">章节页：未确认</span>
+              <span id="writerWindowState" class="status-badge status-idle">作家窗口：未打开</span>
+              <span id="loginState" class="status-badge status-idle">登录：未确认</span>
+              <span id="pageState" class="status-badge status-idle">章节页：未确认</span>
             </div>
             <div id="writerWindowUrl" class="folder-path">当前作家窗口地址：尚未打开</div>
           </div>
 
-          <div class="card controls-card step-card">
-            <div class="section-title">2. 选择本地章节文件夹</div>
+          <div class="card controls-card step-card hidden" data-step="2" id="stepContent2">
+            <div class="section-title"><span class="step-num" data-step-num="2">2</span>选择本地章节文件夹</div>
             <div class="row gap wrap">
               <button id="selectFolderBtn">选择文件夹</button>
               <button id="rescanBtn" class="secondary">重新扫描</button>
@@ -80,7 +113,7 @@
               </label>
               <label class="field-line">
                 <span>章节间隔</span>
-                <input id="uploadDelay" type="number" min="500" step="500" value="2500" />
+                <input id="uploadDelay" type="number" min="1500" step="500" value="3500" />
                 <span>毫秒</span>
               </label>
               <label class="field-line wide-field">
@@ -90,15 +123,13 @@
             </div>
           </div>
 
-          <div class="card controls-card step-card">
-            <div class="section-title">3. 上传草稿</div>
+          <div class="card controls-card step-card hidden" data-step="3" id="stepContent3">
+            <div class="section-title"><span class="step-num" data-step-num="3">3</span>上传草稿</div>
             <p class="hint">确认作家窗口停留在目标作品章节管理页后，再开始上传。异常时会暂停，等待你在作家窗口中人工处理。</p>
             <label class="field-line upload-action-line">
               <span>完成后动作</span>
               <select id="publishAction">
-                <option value="draft">存草稿</option>
                 <option value="next">完整发布流程（下一步→检测→确认发布）</option>
-                <option value="none">只填写不点击</option>
               </select>
             </label>
             <div class="row gap wrap">
@@ -110,9 +141,14 @@
               <button id="stopBtn" class="danger">停止</button>
             </div>
             <div class="status-strip">
-              <span id="taskState">任务：空闲</span>
+              <span id="taskState" class="status-badge status-idle">任务：空闲</span>
+            </div>
+            <div id="uploadProgressBar" class="progress-bar hidden">
+              <div id="uploadProgressFill" class="progress-fill" style="width: 0%"></div>
+              <span id="uploadProgressText" class="progress-text">0%</span>
             </div>
           </div>
+          </div><!-- /step-content-area -->
         </section>
 
         <section class="card chapter-card">
@@ -127,13 +163,20 @@
               <button id="clearSelectedBtn" class="tiny">清空选择</button>
               <button id="invertSelectedBtn" class="tiny">反选</button>
               <span class="chapter-search-group">
-                <input id="chapterSearchInput" type="number" min="1" placeholder="跳转到章节号" class="chapter-search-input" />
-                <button id="chapterJumpBtn" class="tiny primary">跳转</button>
+                <input id="chapterSearchInput" type="text" placeholder="搜索章节号或标题" class="chapter-search-input" />
+                <button id="chapterSearchClear" class="tiny search-clear" style="display:none">&times;</button>
+                <button id="chapterJumpBtn" class="tiny primary">🔍</button>
+                <span id="searchResultCount" class="search-result-count"></span>
               </span>
             </div>
           </div>
           <div class="table-wrap">
-            <table>
+            <div id="chapterEmptyState" class="empty-state">
+              <div class="empty-icon">📖</div>
+              <div class="empty-title">尚未加载章节</div>
+              <div class="empty-hint">请先选择本地章节文件夹并扫描</div>
+            </div>
+            <table id="chapterTable">
               <thead>
                 <tr>
                   <th class="check-col"><input id="selectAllChapters" type="checkbox" title="全选/全不选" /></th>

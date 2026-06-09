@@ -1,6 +1,6 @@
 const api = window.novelPublisher;
-const DEFAULT_FANQIE_URL = 'https://fanqienovel.com/main/writer/book-manage';
-const DEFAULT_QIMAO_URL = 'https://zuozhe.qimao.com/front/index';
+const DEFAULT_FANQIE_URL = api.fanqieDefaultUrl;
+const DEFAULT_QIMAO_URL = api.qimaoDefaultUrl;
 
 let currentPlatform = 'fanqie';
 
@@ -37,6 +37,7 @@ const els = {
   clearSelectedBtn: document.getElementById('clearSelectedBtn'),
   invertSelectedBtn: document.getElementById('invertSelectedBtn'),
   chapterTableBody: document.getElementById('chapterTableBody'),
+  chapterTable: document.getElementById('chapterTable'),
   chapterCount: document.getElementById('chapterCount'),
   writerWindowState: document.getElementById('writerWindowState'),
   writerWindowUrl: document.getElementById('writerWindowUrl'),
@@ -56,7 +57,13 @@ const els = {
   pageTitle: document.getElementById('pageTitle'),
   windowTitle: document.getElementById('windowTitle'),
   windowCaption: document.getElementById('windowCaption'),
-  appMark: document.getElementById('appMark')
+  appMark: document.getElementById('appMark'),
+  uploadProgressBar: document.getElementById('uploadProgressBar'),
+  uploadProgressFill: document.getElementById('uploadProgressFill'),
+  uploadProgressText: document.getElementById('uploadProgressText'),
+  chapterEmptyState: document.getElementById('chapterEmptyState'),
+  chapterSearchClear: document.getElementById('chapterSearchClear'),
+  searchResultCount: document.getElementById('searchResultCount')
 };
 
 const PLATFORM_INFO = {
@@ -81,8 +88,8 @@ const PLATFORM_INFO = {
 let settings = {
   removeTitleLine: true,
   recursive: false,
-  uploadDelayMs: 2500,
-  publishAction: 'draft',
+  uploadDelayMs: 3500,
+  publishAction: 'next',
   fanqieUrl: DEFAULT_FANQIE_URL,
   qimaoUrl: DEFAULT_QIMAO_URL,
   platform: 'fanqie'
@@ -99,11 +106,67 @@ let pauseRequested = false;
 let stopRequested = false;
 let waitResumeResolve = null;
 let skipCurrentRequested = false;
+let searchFilter = '';
 
 function platformInfo() {
   return PLATFORM_INFO[currentPlatform] || PLATFORM_INFO.fanqie;
 }
 
+
+
+function updateStepStates() {
+  const step1 = document.querySelector('[data-step="1"]');
+  const step2 = document.querySelector('[data-step="2"]');
+  const step3 = document.querySelector('[data-step="3"]');
+  if (step1) step1.classList.toggle('step-done', pageConfirmed);
+  if (step2) step2.classList.toggle('step-done', chapters.length > 0);
+  if (step3) step3.classList.toggle('step-done', chapters.some(function(ch) { return ch.status === '已保存草稿' || ch.status === '已发布'; }));
+  updateNavStepStatus();
+}
+
+function switchStep(stepNum) {
+  var panels = document.querySelectorAll(".step-content-area .step-card");
+  var navItems = document.querySelectorAll(".nav-step-item");
+  for (var i = 0; i < panels.length; i++) {
+    panels[i].classList.toggle("hidden", panels[i].dataset.step !== String(stepNum));
+  }
+  for (var j = 0; j < navItems.length; j++) {
+    navItems[j].classList.toggle("active", navItems[j].dataset.navStep === String(stepNum));
+  }
+}
+
+function updateNavStepStatus() {
+  var s1 = document.getElementById("navStep1Status");
+  var s2 = document.getElementById("navStep2Status");
+  var s3 = document.getElementById("navStep3Status");
+  if (s1) s1.textContent = pageConfirmed ? "\u2713" : "";
+  if (s2) s2.textContent = chapters.length > 0 ? chapters.length + "\u7ae0" : "";
+  if (s3) {
+    var done = chapters.filter(function(ch) { return ch.status === "\u5df2\u53d1\u5e03"; }).length;
+    s3.textContent = done > 0 ? done + "\u5df2\u53d1\u5e03" : "";
+  }
+  var navItems = document.querySelectorAll(".nav-step-item");
+  for (var i = 0; i < navItems.length; i++) {
+    var step = navItems[i].dataset.navStep;
+    var done = false;
+    if (step === "1") done = pageConfirmed;
+    if (step === "2") done = chapters.length > 0;
+    if (step === "3") done = chapters.some(function(ch) { return ch.status === "\u5df2\u53d1\u5e03"; });
+    navItems[i].classList.toggle("step-complete", done);
+  }
+}
+
+function updateProgressBar(done, total) {
+  if (!els.uploadProgressBar) return;
+  if (total <= 0) {
+    els.uploadProgressBar.classList.add('hidden');
+    return;
+  }
+  els.uploadProgressBar.classList.remove('hidden');
+  var pct = Math.round((done / total) * 100);
+  els.uploadProgressFill.style.width = pct + '%';
+  els.uploadProgressText.textContent = done + '/' + total + ' (' + pct + '%)';
+}
 function platformUrl() {
   return currentPlatform === 'qimao' ? (settings.qimaoUrl || DEFAULT_QIMAO_URL) : (settings.fanqieUrl || DEFAULT_FANQIE_URL);
 }
@@ -128,12 +191,17 @@ function nowTime() {
 
 function log(message) {
   const line = `[${nowTime()}] ${message}`;
-  els.logBox.textContent += `${line}\n`;
+  els.logBox.insertAdjacentText('beforeend', `${line}\n`);
   els.logBox.scrollTop = els.logBox.scrollHeight;
 }
 
 function setTaskState(text) {
   els.taskState.textContent = `任务：${text}`;
+  const badgeClass = text === '空闲' || text === '已停止' ? 'status-idle'
+    : text === '运行中' || text === '请求暂停' || text === '正在停止' || text.includes('上传') ? 'status-busy'
+    : text === '已暂停' ? 'status-warn'
+    : '';
+  els.taskState.className = `status-badge ${badgeClass}`.trim();
   updateTaskControls();
 }
 
@@ -149,10 +217,16 @@ function updateTaskControls() {
 
 function setLoginState(text) {
   els.loginState.textContent = `登录：${text}`;
+  const badgeClass = text === '用户已确认' ? 'status-ok' : text.includes('未确认') ? 'status-idle' : 'status-warn';
+  els.loginState.className = `status-badge ${badgeClass}`.trim();
+  updateStepStates();
 }
 
 function setPageState(text) {
   els.pageState.textContent = `章节页：${text}`;
+  const badgeClass = text === '用户已确认' ? 'status-ok' : text.includes('未确认') ? 'status-idle' : 'status-warn';
+  els.pageState.className = `status-badge ${badgeClass}`.trim();
+  updateStepStates();
 }
 
 function currentOptions() {
@@ -167,8 +241,8 @@ function currentSettingsFromUi() {
     ...settings,
     removeTitleLine: els.removeTitleLine.checked,
     recursive: els.recursiveScan.checked,
-    uploadDelayMs: Math.max(500, Number(els.uploadDelay.value || 2500)),
-    publishAction: els.publishAction.value || 'draft',
+    uploadDelayMs: Math.max(1500, Number(els.uploadDelay.value || 3500)),
+    publishAction: els.publishAction.value || 'next',
     fanqieUrl: settings.fanqieUrl || DEFAULT_FANQIE_URL,
     qimaoUrl: settings.qimaoUrl || DEFAULT_QIMAO_URL,
     platform: currentPlatform
@@ -220,7 +294,16 @@ function textFormatStats(text) {
 
 function renderChapters() {
   els.chapterCount.textContent = `${chapters.length} 章`;
-  const rows = chapters.map((chapter, index) => {
+  updateStepStates();
+  if (els.chapterEmptyState) {
+    els.chapterEmptyState.classList.toggle('hidden', chapters.length > 0);
+  }
+  if (els.chapterTable) {
+    els.chapterTable.style.display = chapters.length > 0 ? '' : 'none';
+  }
+  var displayOrder = [];
+  for (var si = 0; si < chapters.length; si++) displayOrder.push(si);
+  const rows = displayOrder.map((originalIndex) => { const chapter = chapters[originalIndex]; const index = originalIndex;
     const selected = index === selectedIndex ? 'selected' : '';
     const statusTitle = chapter.errorMessage ? `${chapter.status}：${chapter.errorMessage}` : chapter.status;
     const checked = chapter.checked === true ? 'checked' : '';
@@ -318,12 +401,14 @@ function updateWriterWindowState(state) {
   if (!state || !state.open) {
     els.writerWindowState.textContent = '作家窗口：未打开';
     els.writerWindowUrl.textContent = '当前作家窗口地址：尚未打开';
+    els.writerWindowState.className = 'status-badge status-idle';
     return;
   }
 
   const windowMode = state.isMinimized ? '已最小化' : (state.isMaximized ? '已最大化' : '已打开');
   els.writerWindowState.textContent = `作家窗口：${windowMode}`;
   els.writerWindowUrl.textContent = `当前作家窗口地址：${state.url || '加载中'}`;
+  els.writerWindowState.className = 'status-badge status-ok';
 }
 
 async function openWriterWindow(url) {
@@ -340,6 +425,50 @@ async function openWriterWindow(url) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function debounce(fn, ms) {
+  let timer = null;
+  return function() {
+    const args = arguments;
+    const self = this;
+    clearTimeout(timer);
+    timer = setTimeout(function() { fn.apply(self, args); }, ms);
+  };
+}
+
+async function waitForBackToManage(timeout) {
+  timeout = timeout || 20000;
+  var start = Date.now();
+  var editorPattern = platformEditorUrlPattern();
+  while (Date.now() - start < timeout) {
+    ensureTaskNotStopped();
+    var state = await getWriterStateSafe();
+    if (!state || !state.open) return false;
+    var url = state.url || "";
+    if (currentPlatform === "fanqie") {
+      if (/\/chapter-manage\//.test(url) || (/\/publish\//.test(url) && !editorPattern.test(url))) {
+        await sleepWithStop(500);
+        return true;
+      }
+    } else {
+      if (!editorPattern.test(url)) {
+        await sleepWithStop(500);
+        return true;
+      }
+      try {
+        var domInfo = await withTimeout(
+          executeInWriterWindowSafe("({ hasEditor: document.querySelectorAll(\".ql-editor,[contenteditable=true],textarea\").length > 0 })"),
+          3000, "DOM check timeout");
+        if (domInfo && !domInfo.hasEditor) {
+          await sleepWithStop(500);
+          return true;
+        }
+      } catch (e) {}
+    }
+    await sleepWithStop(600);
+  }
+  return false;
 }
 
 function ensureTaskNotStopped() {
@@ -497,7 +626,7 @@ async function clickFinalActionWithRetry(action = 'draft', timeout = 16000) {
     const result = await api.clickFanqieSaveDraft(action);
     if (result?.ok) {
       log(`已点击${label}按钮：${result.text || label}`);
-      await sleepWithStop(action === 'next' ? 2800 : 3600);
+      await sleepWithStop(action === 'next' ? 4000 : 5000);
       await waitForWriterDomStable(1000, 12000);
       return result;
     }
@@ -505,7 +634,7 @@ async function clickFinalActionWithRetry(action = 'draft', timeout = 16000) {
     if (result?.candidates?.length) {
       log(`按钮候选：${result.candidates.map((item) => `${item.text}@${item.x},${item.y},${item.score}`).join(' / ')}`);
     }
-    await sleepWithStop(900);
+    await sleepWithStop(1200);
   }
   throw new Error(lastMessage || `点击${label}超时`);
 }
@@ -575,7 +704,7 @@ async function clickWorkflowActionWithRetry(action, label, timeout = 12000, opti
 
         lastMessage = '已点击“是”前面的单选圆点，但页面未显示“是”已选中，准备重试';
         lastCandidates = result?.candidates || lastCandidates;
-        await sleepWithStop(1100);
+        await sleepWithStop(1500);
         continue;
       }
 
@@ -585,7 +714,7 @@ async function clickWorkflowActionWithRetry(action, label, timeout = 12000, opti
     } catch (error) {
       lastMessage = error.message || String(error);
     }
-    await sleepWithStop(1100);
+    await sleepWithStop(1500);
   }
 
   if (optional) {
@@ -816,6 +945,14 @@ async function uploadOneChapter(chapter) {
   const stateAfterCleanup = await getWriterStateSafe();
   const editorPattern = platformEditorUrlPattern();
   const alreadyInEditor = editorPattern.test(stateAfterCleanup?.url || stateBeforeUpload?.url || '');
+  try {
+    const domConfirm = await withTimeout(
+      executeInWriterWindowSafe("({ hasEditor: document.querySelectorAll('input,.ql-editor,[contenteditable=true],textarea').length > 0 })"),
+      3000, "editor DOM check timeout");
+    if (domConfirm && !domConfirm.hasEditor) {
+      log("URL 匹配编辑器但页面未发现编辑元素，将按新建章节流程处理。");
+    }
+  } catch (_) {}
 
   let result;
   try {
@@ -869,7 +1006,7 @@ async function uploadOneChapter(chapter) {
     }
 
     if (!result) {
-      const finalAction = els.publishAction.value || settings.publishAction || 'draft';
+      const finalAction = els.publishAction.value || settings.publishAction || 'next';
       {
         const qimaoSaveDraft = currentPlatform === 'qimao' ? (finalAction === 'draft') : false;
         const qimaoAutoPublish = currentPlatform === 'qimao' && finalAction === 'next';
@@ -883,8 +1020,8 @@ async function uploadOneChapter(chapter) {
     }
 
     if (result?.ok) {
-      const finalAction = els.publishAction.value || settings.publishAction || 'draft';
-      const label = finalAction === 'next' ? '完整发布流程' : (finalAction === 'none' ? '只填写不点击' : '存草稿');
+      const finalAction = els.publishAction.value || settings.publishAction || 'next';
+      const label = '完整发布流程';
       log(`标题和正文已写入，完成后动作：${label}。`);
       if (finalAction === 'next') {
         if (currentPlatform === 'qimao') {
@@ -1014,7 +1151,7 @@ async function uploadOneChapter(chapter) {
   }
 
   if (result.ok) {
-    const finalAction = result.finalAction || els.publishAction.value || settings.publishAction || 'draft';
+    const finalAction = result.finalAction || els.publishAction.value || settings.publishAction || 'next';
     chapter.status = finalAction === 'next' ? '已发布' : '已保存草稿';
     chapter.errorMessage = '';
     await api.markSuccess({
@@ -1025,6 +1162,12 @@ async function uploadOneChapter(chapter) {
       contentHash: chapter.contentHash
     });
     log(`${finalAction === 'next' ? '直接发布完成' : '保存草稿成功'}：${chapter.title}`);
+    if (finalAction !== "none") {
+      log("等待页面返回章节管理页...");
+      const backOk = await waitForBackToManage(20000);
+      if (backOk) log("已确认返回章节管理页。");
+      else log("等待返回章节管理页超时，下一章将重新检测页面状态。");
+    }
   } else if (result.stopped) {
     chapter.status = '已停止';
     chapter.errorMessage = '用户请求停止任务';
@@ -1089,6 +1232,7 @@ async function runBatchUpload() {
   pauseRequested = false;
   skipCurrentRequested = false;
   setTaskState('运行中');
+  updateProgressBar(0, checkedChapters.length);
   log(`开始批量上传草稿，本次勾选 ${checkedChapters.length} 章。`);
 
   try {
@@ -1126,13 +1270,15 @@ async function runBatchUpload() {
         continue;
       }
 
-      const delay = Math.max(500, Number(els.uploadDelay.value || 2500));
+      const delay = Math.max(1500, Number(els.uploadDelay.value || 3500));
       await sleepWithStop(delay);
+      updateProgressBar(chapters.filter(function(ch) { return ch.status === '\u5DF2\u4FDD\u5B58\u8349\u7A3F' || ch.status === '\u5DF2\u53D1\u5E03'; }).length, checkedChapters.length);
     }
   } finally {
     taskRunning = false;
     pauseRequested = false;
     waitResumeResolve = null;
+    updateProgressBar(0, 0);
     setTaskState(stopRequested ? '已停止' : '空闲');
     log(stopRequested ? '上传任务已停止。' : '批量上传流程结束。');
   }
@@ -1171,7 +1317,7 @@ async function uploadSelectedChapter() {
       renderChapters();
       const result = await uploadOneChapter(chapters[index]);
       if (result.stopped || !result.ok) break;
-      const delay = Math.max(500, Number(els.uploadDelay.value || 2500));
+      const delay = Math.max(1500, Number(els.uploadDelay.value || 3500));
       await sleepWithStop(delay);
     }
   } catch (error) {
@@ -1242,8 +1388,8 @@ async function init() {
       settings.qimaoUrl = DEFAULT_QIMAO_URL;
     }
     records = await api.loadRecords();
-    if (!['draft', 'next', 'none'].includes(settings.publishAction)) {
-      settings.publishAction = currentPlatform === 'qimao' ? 'next' : 'draft';
+    if (settings.publishAction !== 'next') {
+      settings.publishAction = 'next';
     }
   } catch (error) {
     log(`加载本地配置失败：${error.message}`);
@@ -1251,8 +1397,8 @@ async function init() {
 
   els.removeTitleLine.checked = settings.removeTitleLine !== false;
   els.recursiveScan.checked = Boolean(settings.recursive);
-  els.uploadDelay.value = String(settings.uploadDelayMs || 2500);
-  els.publishAction.value = settings.publishAction || (currentPlatform === 'qimao' ? 'next' : 'draft');
+  els.uploadDelay.value = String(settings.uploadDelayMs || 3500);
+  els.publishAction.value = settings.publishAction || 'next';
   setLoginState('未确认');
   setPageState('未确认');
   setTaskState('空闲');
@@ -1273,17 +1419,17 @@ async function init() {
   log(`工具已启动。当前平台：${info.displayName}。先打开${info.displayName}作家助手工作台并进入目标作品章节管理页，再选择本地章节文件夹并上传草稿。`);
 }
 
-els.selectFolderBtn.addEventListener('click', async () => {
+els.selectFolderBtn.addEventListener('click', debounce(async () => {
   const selected = await api.selectFolder();
   if (!selected) return;
   folderPath = selected;
   els.folderPath.textContent = folderPath;
   await scanCurrentFolder();
-});
+  }, 500));
 
-els.rescanBtn.addEventListener('click', scanCurrentFolder);
-els.removeTitleLine.addEventListener('change', scanCurrentFolder);
-els.recursiveScan.addEventListener('change', scanCurrentFolder);
+els.rescanBtn.addEventListener('click', debounce(scanCurrentFolder, 400));
+els.removeTitleLine.addEventListener('change', debounce(scanCurrentFolder, 400));
+els.recursiveScan.addEventListener('change', debounce(scanCurrentFolder, 400));
 els.uploadDelay.addEventListener('change', persistSettings);
 els.publishAction.addEventListener('change', persistSettings);
 els.bookName.addEventListener('change', () => {
@@ -1334,28 +1480,55 @@ els.invertSelectedBtn.addEventListener('click', () => {
   renderChapters();
 });
 
-function jumpToChapter() {
-  const target = parseInt(els.chapterSearchInput.value, 10);
+function applyChapterSearch() {
+  var value = els.chapterSearchInput.value.trim();
+  if (!value) {
+    searchFilter = "";
+    renderChapters();
+    return;
+  }
+  var target = parseInt(value, 10);
   if (isNaN(target) || target < 1) {
-    log('请输入有效的章节号（正整数）。');
+    log("\u8bf7\u8f93\u5165\u6709\u6548\u7684\u7ae0\u8282\u53f7\uff08\u6b63\u6574\u6570\uff09\u3002");
     return;
   }
-  const index = chapters.findIndex((ch) => ch.index === target);
-  if (index === -1) {
-    log(`未找到第 ${target} 章。`);
+  var found = -1;
+  for (var i = 0; i < chapters.length; i++) {
+    if (chapters[i].index === target) { found = i; break; }
+  }
+  if (found === -1) {
+    log("\u672a\u627e\u5230\u7b2c " + target + " \u7ae0\u3002");
     return;
   }
-  selectedIndex = index;
+  searchFilter = "";
+  selectedIndex = found;
   renderChapters();
-  const row = els.chapterTableBody.querySelector(`tr[data-index="${index}"]`);
-  if (row) row.scrollIntoView({ block: 'start', behavior: 'smooth' });
-  log(`已跳转到第 ${target} 章（${chapters[index].title || chapters[index].fileName}）。`);
+  requestAnimationFrame(function() {
+    var row2 = els.chapterTableBody.querySelector('tr[data-index="' + found + '"]');
+    if (!row2) return;
+    row2.scrollIntoView({ block: "center", behavior: "smooth" });
+    var wrap = row2.closest(".table-wrap");
+    if (wrap) {
+      var rowRect = row2.getBoundingClientRect();
+      var wrapRect = wrap.getBoundingClientRect();
+      var offset = (rowRect.top - wrapRect.top) - (wrapRect.height / 2 - rowRect.height / 2);
+      wrap.scrollTo({ top: wrap.scrollTop + offset, behavior: "smooth" });
+    }
+  });
+  log("\u5df2\u8df3\u8f6c\u5230\u7b2c " + target + " \u7ae0\uff08" + (chapters[found].title || chapters[found].fileName) + "\uff09\u3002");
 }
 
-els.chapterSearchInput.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') jumpToChapter();
+function clearChapterSearch() {
+  if (els.chapterSearchInput) els.chapterSearchInput.value = "";
+}
+
+// Real-time search disabled - use Enter or click to jump
+els.chapterSearchInput.addEventListener('keydown', function(event) {
+  if (event.key === 'Enter') { event.preventDefault(); applyChapterSearch(); }
+  if (event.key === 'Escape') clearChapterSearch();
 });
-els.chapterJumpBtn.addEventListener('click', jumpToChapter);
+els.chapterJumpBtn.addEventListener('click', debounce(applyChapterSearch, 300));
+if (els.chapterSearchClear) els.chapterSearchClear.addEventListener('click', clearChapterSearch);
 
 els.closePreviewBtn.addEventListener('click', hideChapterPreview);
 els.previewModal.addEventListener('click', (event) => {
@@ -1407,7 +1580,7 @@ els.minimizeMainWindowBtn?.addEventListener('click', () => controlMainWindow('mi
 els.toggleMainWindowBtn?.addEventListener('click', () => controlMainWindow('toggle-maximize'));
 els.closeMainWindowBtn?.addEventListener('click', () => controlMainWindow('close'));
 
-els.openWriterBtn.addEventListener('click', handleOpenWriterWindow);
+els.openWriterBtn.addEventListener('click', debounce(handleOpenWriterWindow, 500));
 els.minimizeWriterWindowBtn.addEventListener('click', () => controlWriterWindow('minimize', '已最小化作家窗口。'));
 els.toggleMaxWriterWindowBtn.addEventListener('click', () => controlWriterWindow('toggle-maximize', '已切换作家窗口最大化/还原状态。'));
 els.reloadWriterWindowBtn.addEventListener('click', async () => {
@@ -1419,22 +1592,22 @@ els.reloadWriterWindowBtn.addEventListener('click', async () => {
     log(`刷新作家助手窗口失败：${error.message}`);
   }
 });
-els.loginReadyBtn.addEventListener('click', async () => {
+els.loginReadyBtn.addEventListener('click', debounce(async () => {
   loginConfirmed = true;
   setLoginState('用户已确认');
   const name = platformInfo().displayName;
   log(`用户确认已登录${name}作家助手工作台。`);
   await detectCurrentPage();
-});
-els.chapterPageReadyBtn.addEventListener('click', async () => {
+  }, 500));
+els.chapterPageReadyBtn.addEventListener('click', debounce(async () => {
   pageConfirmed = true;
   setPageState('用户已确认');
   log('用户确认已进入目标作品章节管理页。');
   await detectCurrentPage();
-});
-els.testPageBtn.addEventListener('click', detectCurrentPage);
-els.startBtn.addEventListener('click', runBatchUpload);
-els.uploadSelectedBtn.addEventListener('click', uploadSelectedChapter);
+  }, 500));
+els.testPageBtn.addEventListener('click', debounce(detectCurrentPage, 500));
+els.startBtn.addEventListener('click', debounce(runBatchUpload, 500));
+els.uploadSelectedBtn.addEventListener('click', debounce(uploadSelectedChapter, 500));
 els.pauseBtn.addEventListener('click', () => {
   if (!taskRunning || stopRequested) return;
   pauseRequested = true;
@@ -1457,6 +1630,7 @@ els.stopBtn.addEventListener('click', () => {
     log('当前没有正在运行的上传任务。');
     return;
   }
+  if (!window.confirm('确定要停止当前上传任务吗？')) return;
   stopRequested = true;
   pauseRequested = false;
   skipCurrentRequested = false;
@@ -1473,8 +1647,8 @@ els.platformSelector.addEventListener('change', async () => {
     return;
   }
   currentPlatform = newPlatform;
-  // 切换平台时同步更新"完成后动作"默认值：Qimao 默认完整发布，Fanqie 默认存草稿
-  els.publishAction.value = newPlatform === 'qimao' ? 'next' : 'draft';
+  // 切换平台时同步更新"完成后动作"默认值：统一使用完整发布流程
+  els.publishAction.value = 'next';
   await persistSettings();
   updatePlatformUI();
   setupPlatformEventListeners(currentPlatform);
@@ -1487,10 +1661,17 @@ els.platformSelector.addEventListener('change', async () => {
   applyHistoricalRecords();
   renderChapters();
 
-  handleOpenWriterWindow();
+  const name = PLATFORM_INFO[newPlatform]?.displayName || '平台';
+  log('已切换到' + name + '平台，请点击“打开作家助手工作台”打开新窗口。');
 });
 
-els.saveReportBtn.addEventListener('click', saveReport);
+document.querySelectorAll('.nav-step-item').forEach(function(item) {
+  item.addEventListener('click', function() {
+    switchStep(Number(item.dataset.navStep));
+  });
+});
+
+els.saveReportBtn.addEventListener('click', debounce(saveReport, 300));
 els.clearLogBtn.addEventListener('click', () => {
   els.logBox.textContent = '';
 });

@@ -7,6 +7,7 @@ const chapterScanner = require('./chapter-scanner');
 const store = require('./store');
 const fanqieHandlers = require('./fanqie-handlers');
 const qimaoHandlers = require('./qimao-handlers');
+const platforms = require('../platforms');
 
 app.setName('番茄小说草稿上传助手');
 
@@ -98,8 +99,8 @@ function registerIpcHandlers() {
       removeTitleLine: true,
       recursive: false,
       uploadDelayMs: 2500,
-      fanqieUrl: windows.DEFAULT_FANQIE_URL,
-      qimaoUrl: windows.DEFAULT_QIMAO_URL
+      fanqieUrl: platforms.get('fanqie').defaultUrl,
+      qimaoUrl: platforms.get('qimao').defaultUrl
     });
   });
 

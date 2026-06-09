@@ -1,44 +1,22 @@
+const commonHandlers = require('./common-handlers');
+const platforms = require('../platforms');
+
 module.exports = {
   register({ ipcMain, windows, chapterScanner, store }) {
+    const fanqieDefaultUrl = platforms.get('fanqie').defaultUrl;
+
+    commonHandlers.registerCommonHandlers({ platform: 'fanqie', ipcMain, windows });
+
     ipcMain.handle('fanqie:open-writer-window', async (_event, payload) => {
-      const targetUrl = payload?.url || windows.DEFAULT_FANQIE_URL;
+      const targetUrl = payload?.url || fanqieDefaultUrl;
       windows.openWriterWindow('fanqie', targetUrl);
       return { ok: true };
     });
 
     // 兼容上一版命名。
     ipcMain.handle('fanqie:open-login-popup', async (_event, payload) => {
-      const targetUrl = payload?.url || windows.DEFAULT_FANQIE_URL;
+      const targetUrl = payload?.url || fanqieDefaultUrl;
       windows.openWriterWindow('fanqie', targetUrl);
-      return { ok: true };
-    });
-
-    ipcMain.handle('fanqie:execute-js', async (_event, script) => {
-      const targetWindow = windows.getWriterWindowOrThrow();
-      try {
-        return await targetWindow.webContents.executeJavaScript(script, true);
-      } catch (error) {
-        const url = targetWindow.webContents.getURL();
-        const message = error && error.message ? error.message : String(error);
-        throw new Error(`${message}; url: ${url || 'unknown'}`);
-      }
-    });
-
-    ipcMain.handle('fanqie:execute-js-safe', async (_event, script) => {
-      const targetWindow = windows.getWriterWindowOrThrow();
-      try {
-        const value = await targetWindow.webContents.executeJavaScript(script, true);
-        return { ok: true, value, url: targetWindow.webContents.getURL() };
-      } catch (error) {
-        const url = targetWindow.webContents.getURL();
-        const message = error && error.message ? error.message : String(error);
-        return { ok: false, message, url: url || '' };
-      }
-    });
-
-    ipcMain.handle('fanqie:reload-writer-window', async () => {
-      const targetWindow = windows.getWriterWindowOrThrow();
-      targetWindow.reload();
       return { ok: true };
     });
 
@@ -180,15 +158,44 @@ module.exports = {
       try {
         await targetWindow.webContents.executeJavaScript(`
           (() => {
-            const x = ${JSON.stringify(rect.x)};
-            const y = ${JSON.stringify(rect.y)};
-            const el = document.elementFromPoint(x, y);
-            const target = el && (el.closest('button,a,[role="button"]') || el);
+            const btnText = ${JSON.stringify(rect.text || '')};
+            const action = ${JSON.stringify(clickAction)};
+            const draftRegex = /^(存草稿|保存草稿|存为草稿|暂存草稿)$/;
+            const nextRegex = /^(下一步|直接发布|发布|提交审核|立即发布)$/;
+            const matchRegex = action === 'next' ? nextRegex : draftRegex;
+            function normalize(v) { return String(v || '').replace(/\\s+/g, ' ').trim(); }
+            function visible(el) {
+              if (!el || typeof el.getBoundingClientRect !== 'function') return false;
+              var r = el.getBoundingClientRect();
+              var s = getComputedStyle(el);
+              return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0'
+                && r.bottom >= 0 && r.right >= 0 && r.top <= window.innerHeight && r.left <= window.innerWidth;
+            }
+            function disabledOf(el) {
+              return Boolean(el.disabled || el.getAttribute('aria-disabled') === 'true' || /disabled/i.test(String(el.className || '')));
+            }
+            var candidates = Array.from(document.querySelectorAll('button,a,[role="button"]'))
+              .filter(visible)
+              .filter(function(el) { return !disabledOf(el); })
+              .map(function(el) {
+                var t = normalize(el.innerText || el.textContent || el.getAttribute('aria-label') || '');
+                var score = 0;
+                if (matchRegex.test(t)) score += 200;
+                if (t === btnText) score += 100;
+                if (/定时发布|定时发送/.test(t)) score -= 500;
+                return { el: el, text: t, score: score };
+              })
+              .filter(function(item) { return item.score > 0; })
+              .sort(function(a, b) { return b.score - a.score; });
+            var target = candidates[0] ? candidates[0].el : null;
+            if (!target) {
+              var el = document.elementFromPoint(${JSON.stringify(rect.x)}, ${JSON.stringify(rect.y)});
+              target = el && (el.closest('button,a,[role="button"]') || el);
+            }
             if (!target) return false;
-            const rect = target.getBoundingClientRect();
-            const cx = rect.left + rect.width / 2;
-            const cy = rect.top + rect.height / 2;
-            target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+            var r = target.getBoundingClientRect();
+            var cx = r.left + r.width / 2;
+            var cy = r.top + r.height / 2;
             try { target.focus && target.focus(); } catch (_) {}
             try { target.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerType: 'mouse', clientX: cx, clientY: cy })); } catch (_) {}
             target.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, cancelable: true, clientX: cx, clientY: cy }));
@@ -201,10 +208,6 @@ module.exports = {
         `, true);
       } catch (_) {}
 
-      await new Promise((resolve) => setTimeout(resolve, 120));
-      targetWindow.webContents.sendInputEvent({ type: 'mouseMove', x: rect.x, y: rect.y });
-      targetWindow.webContents.sendInputEvent({ type: 'mouseDown', x: rect.x, y: rect.y, button: 'left', clickCount: 1 });
-      targetWindow.webContents.sendInputEvent({ type: 'mouseUp', x: rect.x, y: rect.y, button: 'left', clickCount: 1 });
       return { ...rect, ok: true };
     });
 
@@ -597,24 +600,48 @@ module.exports = {
         return rect || { ok: false, message: `没有找到可点击的${config.label}` };
       }
 
-      if (action === 'use_ai') {
-        try {
-          await targetWindow.webContents.executeJavaScript(`
-            (() => {
-              const x = ${JSON.stringify(rect.x)};
-              const y = ${JSON.stringify(rect.y)};
-              const action = ${JSON.stringify(action)};
-            const el = document.elementFromPoint(x, y);
-            let target = el && (el.closest('button,a,label,[role="button"],[role="radio"],.semi-radio,.semi-radioGroup,.semi-radio-addon,.byte-radio,.arco-radio') || el);
-            if (!target) return false;
-            if (action === 'use_ai') {
-              const label = el.closest('label') || target.closest('label');
-              if (label) target = label;
+      try {
+        await targetWindow.webContents.executeJavaScript(`
+          (() => {
+            var btnText = ${JSON.stringify(rect.text || '')};
+            var actionKey = ${JSON.stringify(config.actionKey || '')};
+            function normalize(v) { return String(v || '').replace(/\\s+/g, ' ').trim(); }
+            function visible(el) {
+              if (!el || typeof el.getBoundingClientRect !== 'function') return false;
+              var r = el.getBoundingClientRect();
+              var s = getComputedStyle(el);
+              return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0'
+                && r.bottom >= 0 && r.right >= 0 && r.top <= window.innerHeight && r.left <= window.innerWidth;
             }
-            const rect = target.getBoundingClientRect();
-            const cx = action === 'use_ai' ? x : (rect.left + rect.width / 2);
-            const cy = action === 'use_ai' ? y : (rect.top + rect.height / 2);
-            target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+            function disabledOf(el) {
+              return Boolean(el.disabled || el.getAttribute('aria-disabled') === 'true' || /disabled/i.test(String(el.className || '')));
+            }
+            var selectors = 'button,a,label,[role="button"],[role="radio"],.arco-radio';
+            var candidates = Array.from(document.querySelectorAll(selectors))
+              .filter(visible)
+              .filter(function(el) { return !disabledOf(el); })
+              .map(function(el) {
+                var t = normalize(el.innerText || el.textContent || el.getAttribute('aria-label') || '');
+                var score = 0;
+                if (t === btnText) score += 300;
+                if (t && btnText && t.includes(btnText.slice(0, 4))) score += 100;
+                return { el: el, text: t, score: score };
+              })
+              .filter(function(item) { return item.score > 0; })
+              .sort(function(a, b) { return b.score - a.score; });
+            var target = candidates[0] ? candidates[0].el : null;
+            if (!target) {
+              var el = document.elementFromPoint(${JSON.stringify(rect.x)}, ${JSON.stringify(rect.y)});
+              target = el && (el.closest(selectors) || el);
+            }
+            if (!target) return false;
+            if (actionKey === 'use_ai') {
+              var label = target.closest('label') || target;
+              target = label;
+            }
+            var r = target.getBoundingClientRect();
+            var cx = r.left + r.width / 2;
+            var cy = r.top + r.height / 2;
             try { target.focus && target.focus(); } catch (_) {}
             try { target.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerType: 'mouse', clientX: cx, clientY: cy })); } catch (_) {}
             target.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, cancelable: true, clientX: cx, clientY: cy }));
@@ -622,77 +649,23 @@ module.exports = {
             target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0 }));
             try { target.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, pointerType: 'mouse', clientX: cx, clientY: cy })); } catch (_) {}
             target.click();
-            const input = target.matches && target.matches('input[type="radio"],input[type="checkbox"]') ? target : target.querySelector && target.querySelector('input[type="radio"],input[type="checkbox"]');
-            if (input) {
-              input.checked = true;
-              input.dispatchEvent(new Event('input', { bubbles: true }));
-              input.dispatchEvent(new Event('change', { bubbles: true }));
-              input.click && input.click();
+            if (actionKey === 'use_ai') {
+              var input = target.matches && target.matches('input[type="radio"],input[type="checkbox"]') ? target : target.querySelector && target.querySelector('input[type="radio"],input[type="checkbox"]');
+              if (input) {
+                input.checked = true;
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+                try { input.click(); } catch (_) {}
+              }
             }
             return true;
           })();
-          `, true);
-        } catch (_) {}
-      }
+        `, true);
+      } catch (_) {}
 
-      await new Promise((resolve) => setTimeout(resolve, action === 'submit' ? 180 : 120));
-      targetWindow.webContents.sendInputEvent({ type: 'mouseMove', x: rect.x, y: rect.y });
-      targetWindow.webContents.sendInputEvent({ type: 'mouseDown', x: rect.x, y: rect.y, button: 'left', clickCount: 1 });
-      targetWindow.webContents.sendInputEvent({ type: 'mouseUp', x: rect.x, y: rect.y, button: 'left', clickCount: 1 });
       return { ...rect, ok: true, action, label: config.label };
     });
 
-    ipcMain.handle('fanqie:control-writer-window', async (_event, action) => {
-      const targetWindow = windows.getWriterWindowOrThrow();
-      switch (action) {
-        case 'minimize':
-          targetWindow.minimize();
-          break;
-        case 'maximize':
-          if (targetWindow.isMinimized()) targetWindow.restore();
-          targetWindow.maximize();
-          break;
-        case 'toggle-maximize':
-          if (targetWindow.isMinimized()) targetWindow.restore();
-          if (targetWindow.isMaximized()) targetWindow.unmaximize();
-          else targetWindow.maximize();
-          break;
-        case 'restore':
-          targetWindow.restore();
-          break;
-        case 'focus':
-          // 兼容旧版动作名：只恢复/显示窗口，不主动抢焦点。
-          if (targetWindow.isMinimized()) targetWindow.restore();
-          else if (typeof targetWindow.showInactive === 'function') targetWindow.showInactive();
-          break;
-        default:
-          throw new Error(`未知作家窗口控制动作：${action}`);
-      }
 
-      windows.emitWriterWindowState('fanqie:writer-window-resized');
-      return {
-        ok: true,
-        open: true,
-        url: targetWindow.webContents.getURL(),
-        title: targetWindow.webContents.getTitle(),
-        isMinimized: targetWindow.isMinimized(),
-        isMaximized: targetWindow.isMaximized()
-      };
-    });
-
-    ipcMain.handle('fanqie:get-window-state', async () => {
-      const ww = windows.getWriterWindow();
-      if (!ww || ww.isDestroyed()) {
-        return { open: false, url: '', title: '' };
-      }
-
-      return {
-        open: true,
-        url: ww.webContents.getURL(),
-        title: ww.webContents.getTitle(),
-        isMinimized: ww.isMinimized(),
-        isMaximized: ww.isMaximized()
-      };
-    });
   }
 };

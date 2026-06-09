@@ -188,16 +188,17 @@ async function scanChapters(folderPath, options = {}) {
   }
 
   const files = naturalSortFiles(await walkChapterFiles(folderPath, Boolean(options.recursive)));
-  const chapters = [];
+  const CONCURRENCY = 8;
+  const chapters = new Array(files.length);
 
-  for (let index = 0; index < files.length; index += 1) {
+  async function processFile(index) {
     const filePath = files[index];
     const buffer = await fs.readFile(filePath);
     const rawText = decodeText(buffer);
     const { title, body, titleLineIndex } = extractTitleAndBody(rawText, path.basename(filePath), options);
     const contentHash = sha256(`${title}\n${body}`);
 
-    chapters.push({
+    chapters[index] = {
       id: contentHash.slice(0, 16),
       index: index + 1,
       filePath,
@@ -209,7 +210,15 @@ async function scanChapters(folderPath, options = {}) {
       contentHash,
       status: '未上传',
       errorMessage: ''
-    });
+    };
+  }
+
+  for (let i = 0; i < files.length; i += CONCURRENCY) {
+    const batch = [];
+    for (let j = i; j < Math.min(i + CONCURRENCY, files.length); j += 1) {
+      batch.push(processFile(j));
+    }
+    await Promise.all(batch);
   }
 
   return chapters;
